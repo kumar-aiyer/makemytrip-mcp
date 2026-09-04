@@ -1,0 +1,6 @@
+# Playwright is the only runtime dependency, and it is OPTIONAL: without it the server
+# still starts, lists its tools and explains what to install. Installing the Python
+# package alone is usually enough - Chrome or Edge already on the machine is driven via
+# the `channel` option. Only run `python -m playwright install chromium` if neither is
+# present.
+playwright>=1.45

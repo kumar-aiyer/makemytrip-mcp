@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "makemytrip": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server.py"],
+      "env": {
+        "MMT_MCP_HOME": "${CLAUDE_PLUGIN_ROOT}/.state",
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}

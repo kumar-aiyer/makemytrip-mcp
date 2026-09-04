@@ -1,0 +1,100 @@
+# makemytrip-mcp
+
+An MCP server that prices Indian travel — **hotels, flights, trains and outstation cabs** —
+from MakeMyTrip, so costing a trip is a question you ask rather than a browser session you
+drive.
+
+Runs anywhere that speaks MCP over stdio: **Claude Cowork** (as a plugin), **OpenClaw**,
+**Claude Code**, or the Claude desktop app.
+
+> **Read-only by design.** There is no booking, cart, payment or login path in this program,
+> and none should be added. Every figure is a signed-out guest rate — a benchmark, not a
+> reservation.
+
+## What it gives you
+
+| Tool | What it answers |
+|---|---|
+| `mmt_capabilities` | What can be priced, what the booking windows are, current health |
+| `mmt_hotel_search` | City + dates → priced list, base/tax/all-in, per-night derived |
+| `mmt_find_hotel_id` | Property name → MakeMyTrip hotelId |
+| `mmt_hotel_rates` | One property → every room type and rate plan, with meal plan and cancellation |
+| `mmt_price_itinerary` | A multi-stop trip → per-leg table **and a total summed server-side** |
+| `mmt_flight_search` | Route + date → fares *(experimental)* |
+| `mmt_train_search` | Route + date → trains with live per-class waitlist status, fare, confirmation odds |
+| `mmt_station_city` | Station codes → city codes, tying a rail leg to its hotel |
+| `mmt_cab_quote` | Two places + date → every vehicle class, base/tax/all-in **and per-km**; optional `return_date` for round trips |
+| `mmt_cab_find_place` | Register a cab location by name (drives the site's own form) |
+| `mmt_cab_add_place` | Register one from a pasted URL — the reliable manual path |
+| `mmt_selftest` | Live check of what still works, and which tier the router is using |
+| `mmt_setup_status` | Is the browser installed and working, and what to run if not |
+
+## Install
+
+```bash
+git clone <your-repo> makemytrip-mcp
+cd makemytrip-mcp
+python -m pip install playwright
+python tools/probe.py          # live acceptance harness - run this first
+```
+
+Then register it: **[docs/INSTALL.md](docs/INSTALL.md)** covers Claude Cowork, OpenClaw,
+Claude Code and the desktop app.
+
+Playwright's *Python package* is the only dependency, and even that is optional — without it
+the server still starts, lists its tools and tells you what to install. It drives **Chrome or
+Edge already on the machine**, so there is usually no 150 MB browser download.
+
+## Where it must run
+
+**On a machine with an ordinary residential connection.** MakeMyTrip's CDN returns HTTP 403
+to datacenter IP ranges — verified directly, along with the same treatment for other Indian
+travel sites. A cloud VM, CI runner or sandboxed container will be refused before any of this
+code matters. Laptop or desktop: fine.
+
+## How it works, briefly
+
+Three execution tiers, chosen per endpoint by a circuit-breaking router:
+
+| Tier | Mechanism | Used for |
+|---|---|---|
+| 0 | Plain `urllib` | The one JSON API with no bot sensor in front of it |
+| 1 | Playwright's `context.request` — the browser's network stack, no page rendering | **Default.** Real TLS fingerprint and cookies at HTTP speed |
+| 2 | Full page render | Bot-check interstitials, and driving forms |
+
+Tier 1 is the design's centre of gravity: it issues requests through a real Chromium without
+paying for rendering, which is what makes an approach that would otherwise be blocked both
+reliable *and* fast. Architecture and rationale: **[docs/DESIGN.md](docs/DESIGN.md)**.
+
+## Things that will bite you
+
+Documented at length in [docs/RUNBOOK.md](docs/RUNBOOK.md); the short version:
+
+- **Four date formats.** Every tool takes ISO `YYYY-MM-DD`; the wire wants `MMDDYYYY`,
+  `YYYYMMDD` or `DD-MM-YYYY` depending on which corner of the site you are in.
+- **Silent 200s everywhere.** A wrong city code, a date outside the train booking window, or
+  a trimmed config block all return HTTP 200 with nothing useful. Each has its own error kind
+  so it never reads as "no availability".
+- **`TOTAL_AMOUNT` is base only.** All-in is `BASE_FARE + TAXES`. A field named "total" that
+  is not the total.
+- **Trains have a 60-day wall; cabs do not.** Indian Railways opens reservations 60 days
+  ahead. Cab pricing has no such limit — dates months out quote fine.
+- **`availablityStatus`** is misspelled in MakeMyTrip's payload. Correcting it yields `None`
+  for every train.
+
+## Tests
+
+```bash
+python tests/test_parsers.py   # 63 assertions, no network and no browser needed
+python tools/probe.py          # live gates
+```
+
+The offline suite asserts on **structure and arithmetic** (`base + tax == all_in`), never on
+particular prices — those drift daily.
+
+## Legal
+
+Unofficial. These are undocumented internal endpoints and MakeMyTrip's terms do not invite
+automated access. Personal, low-volume, read-only use: request volume stays at roughly what a
+person browsing would generate, with one stable device id and no scheduled polling. Don't
+redistribute it, and stop if MakeMyTrip signals otherwise.

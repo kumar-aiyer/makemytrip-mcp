@@ -1,0 +1,48 @@
+{
+  "response": {
+    "hotelCount": 2,
+    "hotelCountInCity": 412,
+    "cityLocationDetail": {
+      "cityCode": "CTCOK",
+      "name": "Kochi"
+    },
+    "personalizedSections": [
+      {
+        "name": "main",
+        "hotels": [
+          {
+            "id": "201211061904322411",
+            "name": "Courtyard by Marriott Kochi Airport",
+            "starRating": 5,
+            "soldOut": false,
+            "priceDetail": {
+              "price": 13700,
+              "totalTax": 2466,
+              "priceWithTax": 16166,
+              "totalAdditionalFees": 0,
+              "ratePlanCode": "990581959017"
+            }
+          },
+          {
+            "id": "200811121041104354",
+            "name": "Le Meridien Kochi",
+            "starRating": 5,
+            "soldOut": false,
+            "priceDetail": {
+              "price": 12000,
+              "totalTax": 2160,
+              "priceWithTax": 14160,
+              "totalAdditionalFees": 0,
+              "ratePlanCode": "990581930178",
+              "coupon": {
+                "code": "MMTSAVE",
+                "couponAmount": 500,
+                "description": "Instant discount"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

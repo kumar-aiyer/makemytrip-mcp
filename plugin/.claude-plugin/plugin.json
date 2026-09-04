@@ -1,0 +1,9 @@
+{
+  "name": "makemytrip-pricing",
+  "displayName": "MakeMyTrip Pricing",
+  "version": "1.0.0",
+  "description": "Price Indian hotels, flights, trains and outstation cabs from MakeMyTrip. Read-only benchmarking - no booking, no login, no payment path.",
+  "author": { "name": "KA" },
+  "keywords": ["travel", "india", "pricing", "hotels", "trains", "cabs"],
+  "mcpServers": "./.mcp.json"
+}

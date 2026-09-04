@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Runtime state: browser profile with cookies, the device id, saved cab places, and
+# diagnostics dumps that can contain full response bodies. None of it belongs in git.
+.state/
+chrome-profile/
+diagnostics/
+data.json
+
+.DS_Store
+.idea/
+.vscode/
