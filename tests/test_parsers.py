@@ -16,6 +16,7 @@ from mmt import hotels as HO        # noqa: E402
 from mmt import rsc                 # noqa: E402
 from mmt import state as ST         # noqa: E402
 from mmt import trains as TR        # noqa: E402
+from mmt.errors import NullPrices   # noqa: E402
 from mmt.router import (Router, Tier, HOTEL_API, TRAIN_PAGE)   # noqa: E402
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
@@ -202,8 +203,11 @@ def test_validators() -> None:
     check("validator: priced hotels valid",
           HO.body_valid(hot) is True)
     nulled = json.loads((FIX / "search_hotels_nullprices.json").read_text("utf-8"))
-    check("validator: all-null prices invalid",
-          HO.body_valid(nulled) is False)
+    try:
+        HO.body_valid(nulled)
+        check("validator: all-null prices raise NullPrices", False)
+    except NullPrices:
+        check("validator: all-null prices raise NullPrices", True)
     check("validator: missing response invalid", HO.body_valid({"x": 1}) is False)
 
     tr_html = (FIX / "trains_listing.html").read_text(encoding="utf-8")
@@ -256,11 +260,43 @@ def test_recover_gating() -> None:
     asyncio.run(run())
 
 
+def test_null_prices_through_fetch() -> None:
+    """Bug-1 regression: a null-price body must surface as kind=null_prices (with the
+    specific remedy) through the real fetch path - never a generic shape_drift - and
+    must not be cached."""
+    import asyncio
+    from unittest.mock import patch
+
+    from mmt import fetch as F
+
+    body = (FIX / "search_hotels_nullprices.json").read_text(encoding="utf-8")
+
+    async def run():
+        def fake(url, b, h, t):
+            return 200, body
+        with patch.object(F, "_t0_post", fake), patch.object(F, "_t1_post", fake), \
+             patch.object(F, "ROUTER", Router()):
+            F.CACHE.clear()
+            url = "https://x.test"
+            payload = {"q": 1}
+            try:
+                await F.post_json(url, payload, ec="hotel_api", validate=HO.body_valid)
+                check("null_prices: raises through fetch", False)
+            except NullPrices as e:
+                check("null_prices: raises through fetch", True)
+                check("null_prices: kind is null_prices", e.kind == "null_prices")
+                hit = F.CACHE.get(
+                    F.cache_key("POST:hotel_api", {"url": url, "body": payload}))
+                check("null_prices: not cached", hit is None)
+
+    asyncio.run(run())
+
+
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
                test_cabs, test_cab_urls, test_router, test_validators,
-               test_recover_gating):
+               test_recover_gating, test_null_prices_through_fetch):
         try:
             fn()
         except Exception as e:

@@ -146,13 +146,19 @@ def all_prices_null(hotels: list[dict]) -> bool:
 def body_valid(data: Any) -> bool:
     """A hotel search response is usable when it parses. A genuinely empty result (a
     wrong city code returns a valid-looking empty payload) is still a *valid* answer -
-    the honest response is "no hotels", surfaced as a warning - not a shape error. Only
-    a missing response object, or rows with every price null (the silent-200 trap), is
-    unusable."""
+    the honest response is "no hotels", surfaced as a warning - not a shape error. A
+    missing response object is unusable (returns False -> shape_drift). Rows with every
+    price null raise NullPrices so the user gets the specific remedy (a trimmed
+    expData/featureFlags block) rather than a generic shape error."""
     if not isinstance(data, dict) or "response" not in data:
         return False
     hotels = flatten(data["response"])
-    return not (hotels and all_prices_null(hotels))
+    if hotels and all_prices_null(hotels):
+        raise NullPrices(
+            "MakeMyTrip returned hotels but every price is null.",
+            hint="This is the signature of a trimmed expData or featureFlags block in "
+                 "mmt/config.py. Both must be sent complete.")
+    return True
 
 
 def summarise(h: dict) -> dict[str, Any]:

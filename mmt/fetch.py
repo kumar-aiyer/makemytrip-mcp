@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import random
 import time
@@ -152,7 +151,9 @@ async def get_text(url: str, *, ec: str, headers: dict[str, str] | None = None,
                    cache_id: str | None = None,
                    validate: Callable[[str], bool] | None = None) -> FetchResult:
     """GET with caching. `validate`, when given, runs on the body before caching:
-    a silent-200 body that fails the caller's check is never cached (F3)."""
+    a silent-200 body that fails the caller's check is never cached (F3). A validator
+    may return False for a generic unusable body, or raise an MMTError to name the
+    specific kind (e.g. NullPrices) - either way the body is not cached."""
     ck = cache_id or cache_key("GET:" + ec, {"url": url})
     if not fresh:
         hit = CACHE.get(ck)
@@ -200,9 +201,10 @@ async def get_text(url: str, *, ec: str, headers: dict[str, str] | None = None,
                               elapsed_ms=int((time.time() - t0) * 1000),
                               fetched_at=_now_iso(), attempts=attempts)
             if validate is not None and not validate(text):
-                # A silent-200 body that fails the caller's validity check is neither
-                # a routing success nor cacheable - so record(True) happens only after
-                # this gate passes, and the body is never cached.
+                # A validator returns False for a generic unusable body, or raises an
+                # MMTError to name the specific kind (e.g. NullPrices) - either way the
+                # body is not a routing success and is never cached: record(True) waits
+                # until this gate passes.
                 raise ShapeDrift("Payload failed the caller's validity check.",
                                  hint="Silent 200 with an unusable body. Not cached.")
             ROUTER.record(ec, tier, True)
@@ -233,7 +235,8 @@ async def post_json(url: str, body: dict, *, ec: str,
                     headers: dict[str, str] | None = None, timeout: float = 45.0,
                     fresh: bool = False, cache_ttl: float = PRICE_TTL,
                     validate: Callable[[dict], bool] | None = None) -> FetchResult:
-    """JSON POST (the hotel search API). `validate` gates caching exactly as in get_text."""
+    """JSON POST (the hotel search API). `validate` gates caching exactly as in get_text:
+    return False, or raise an MMTError to name the specific failure kind."""
     ck = cache_key("POST:" + ec, {"url": url, "body": body})
     if not fresh:
         hit = CACHE.get(ck)
@@ -278,6 +281,10 @@ async def post_json(url: str, body: dict, *, ec: str,
                               elapsed_ms=int((time.time() - t0) * 1000),
                               fetched_at=_now_iso(), attempts=attempts)
             if validate is not None and not validate(data):
+                # Same contract as get_text: a validator returns False for a generic
+                # unusable body, or raises an MMTError (e.g. NullPrices) to name the
+                # specific kind. Either way the body is never cached, and record(True)
+                # waits until this gate passes.
                 raise ShapeDrift("Payload failed the caller's validity check.",
                                  hint="Silent 200 with an unusable body. Not cached.")
             ROUTER.record(ec, tier, True)
