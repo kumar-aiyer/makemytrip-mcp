@@ -191,10 +191,76 @@ def test_router() -> None:
           r2.plan(TRAIN_PAGE)[0] == Tier.REQUEST)
 
 
+# ------------------------------------------------------------------ validators
+
+def test_validators() -> None:
+    # Empty-but-valid must NOT be treated as a shape error (R1): a wrong city code
+    # returns a valid-looking empty payload; a zero-train stream or zero-cab page is
+    # still a correct answer.
+    check("validator: empty hotel response is valid", HO.body_valid({"response": {}}))
+    hot = json.loads((FIX / "search_hotels.json").read_text(encoding="utf-8"))
+    check("validator: priced hotels valid",
+          HO.body_valid(hot) is True)
+    nulled = json.loads((FIX / "search_hotels_nullprices.json").read_text("utf-8"))
+    check("validator: all-null prices invalid",
+          HO.body_valid(nulled) is False)
+    check("validator: missing response invalid", HO.body_valid({"x": 1}) is False)
+
+    tr_html = (FIX / "trains_listing.html").read_text(encoding="utf-8")
+    check("validator: trains page valid", TR.body_valid(tr_html) is True)
+    check("validator: trains interstitial invalid", TR.body_valid("<html></html>") is False)
+    check("validator: empty train stream valid (no trains)",
+          TR.body_valid("<html>self.__next_f.push([1,\"[\\\"0\\\",null]\"])</html>") is True)
+
+    cab_html = (FIX / "cabs_listing.html").read_text(encoding="utf-8")
+    check("validator: cab page valid", CB.body_valid(cab_html) is True)
+    check("validator: cab interstitial invalid", CB.body_valid("<html></html>") is False)
+
+
+def test_recover_gating() -> None:
+    """R4: recovery follows blocked outcomes only, and only when two land close
+    together - a Transport/ShapeDrift pair must never restart the shared browser."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from mmt import fetch as F
+    from mmt.session import Session
+
+    async def run() -> None:
+        calls: list[str] = []
+        s = AsyncMock(Session)
+
+        async def close():
+            calls.append("close")
+
+        async def ensure():
+            calls.append("ensure")
+
+        s.close = close
+        s.ensure = ensure
+
+        with patch.object(F, "SESSION", s):
+            F._LAST_BLOCKED.clear()
+            await F._maybe_recover("hotel_api", "transport")
+            await F._maybe_recover("hotel_api", "transport")
+            check("recover: non-blocked never recovers", calls == [])
+
+            F._LAST_BLOCKED.clear()
+            await F._maybe_recover("hotel_api", "blocked")
+            check("recover: one blocked waits for the second", calls == [])
+
+            await F._maybe_recover("hotel_api", "blocked")
+            check("recover: two blocked -> one fresh session",
+                  calls == ["close", "ensure"])
+
+    asyncio.run(run())
+
+
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
-               test_cabs, test_cab_urls, test_router):
+               test_cabs, test_cab_urls, test_router, test_validators,
+               test_recover_gating):
         try:
             fn()
         except Exception as e:

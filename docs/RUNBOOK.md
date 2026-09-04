@@ -4,7 +4,9 @@
 
 1. `mmt_setup_status` — is there a working browser?
 2. `mmt_selftest` — which capability broke, and which tier is each endpoint on?
-3. `<state>/diagnostics/` — the last failures, with response bodies and screenshots.
+3. `<state>/diagnostics/failures.jsonl` — the last failures: endpoint, error kind,
+   message and which tiers were attempted. Metadata only — response bodies and
+   screenshots are not stored.
 4. `MMT_HEADFUL=1` — watch the browser. Fastest way to understand a block.
 
 ## Symptoms

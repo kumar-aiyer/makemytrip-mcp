@@ -70,15 +70,19 @@ async def search(src: str, dest: str, iso_date: str, *, class_code: str = "",
                  fresh: bool = False) -> dict[str, Any]:
     url = listing_url(src, dest, iso_date, class_code=class_code)
 
-    def _valid(html: str) -> bool:
-        table = rsc.chunks(rsc.blob(html))
-        return any(isinstance(v, dict) and "trainNumber" in v for v in table.values())
-
     res = await get_text(url, ec=TRAIN_PAGE, wait_for="networkidle", fresh=fresh,
-                         validate=_valid)
+                         validate=body_valid)
     out = parse(res.text, url=url, iso_date=iso_date, src=src, dest=dest)
     out.update(res.meta())
     return out
+
+
+def body_valid(html: str) -> bool:
+    """A trains page is usable when it carries an RSC stream. A stream with zero trains
+    (outside the window, or none on that route) is still a valid answer surfaced as
+    NotInWindow/empty; only a page with no RSC data at all is an interstitial, not a
+    result."""
+    return bool(rsc.blob(html))
 
 
 def parse(html: str, *, url: str = "", iso_date: str = "", src: str = "",

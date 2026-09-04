@@ -114,19 +114,38 @@ _LAST_BLOCKED: dict[str, float] = {}
 _RECOVER_AFTER_S = 5.0
 
 
-async def _maybe_recover(ec: str) -> None:
-    """Close the stale-clearance loop (F1): when an endpoint class accumulates two
-    blocked results, relaunch the browser fresh (same profile) and re-warm before the
-    next attempt. Without this, a stale Akamai cookie deadlocks until the idle reap."""
+async def _maybe_recover(ec: str, kind: str) -> None:
+    """Close the stale-clearance loop (F1): only a *blocked* outcome means the Akamai
+    clearance itself is stale. Two such outcomes within a few seconds relaunch the
+    browser fresh on the same profile - a fresh context plus a page warm beats retrying
+    a rejected one."""
+    if kind != "blocked":
+        return
     now = time.time()
     prev = _LAST_BLOCKED.get(ec)
     _LAST_BLOCKED[ec] = now
     if prev is None or (now - prev) > _RECOVER_AFTER_S:
         return
     await SESSION.close()
+    # ensure() re-launches and single-warms (close() clears the warm flag), so an
+    # explicit warmup here would navigate the homepage twice.
     await SESSION.ensure()
-    with contextlib.suppress(Exception):
-        await SESSION.warmup(force=True)
+
+
+def _record_failure(ec: str, err: MMTError) -> None:
+    """Best-effort failure record for the runbook triage step. Metadata only - full
+    response bodies and screenshots are deliberately not written."""
+    try:
+        C.DIAG_DIR.mkdir(parents=True, exist_ok=True)
+        with (C.DIAG_DIR / "failures.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "at": _now_iso(), "ec": ec, "kind": err.kind,
+                "message": err.message, "attempts": err.details.get("attempts"),
+            }) + "\n")
+    except Exception:
+        pass
+
+
 async def get_text(url: str, *, ec: str, headers: dict[str, str] | None = None,
                    wait_for: str | None = None, timeout: float = 45.0,
                    fresh: bool = False, cache_ttl: float = PRICE_TTL,
@@ -177,13 +196,16 @@ async def get_text(url: str, *, ec: str, headers: dict[str, str] | None = None,
                     hint="MakeMyTrip changed the page, or a proxy wrapped it. This is "
                          "not cached, so the next call re-fetches fresh.")
 
-            ROUTER.record(ec, tier, True)
             res = FetchResult(text=text, status=status, tier_used=int(tier),
                               elapsed_ms=int((time.time() - t0) * 1000),
                               fetched_at=_now_iso(), attempts=attempts)
             if validate is not None and not validate(text):
+                # A silent-200 body that fails the caller's validity check is neither
+                # a routing success nor cacheable - so record(True) happens only after
+                # this gate passes, and the body is never cached.
                 raise ShapeDrift("Payload failed the caller's validity check.",
                                  hint="Silent 200 with an unusable body. Not cached.")
+            ROUTER.record(ec, tier, True)
             CACHE.put(ck, {"text": text, "tier": int(tier), "at": res.fetched_at},
                       ttl=cache_ttl)
             return res
@@ -193,7 +215,7 @@ async def get_text(url: str, *, ec: str, headers: dict[str, str] | None = None,
             last = e
             if not e.escalate:
                 raise
-            await _maybe_recover(ec)
+            await _maybe_recover(ec, e.kind)
             await asyncio.sleep(0.6 + random.random() * 0.6)
         except Exception as e:
             ROUTER.record(ec, tier, False)
@@ -203,7 +225,10 @@ async def get_text(url: str, *, ec: str, headers: dict[str, str] | None = None,
 
     assert last is not None
     last.details["attempts"] = attempts
+    _record_failure(ec, last)
     raise last
+
+
 async def post_json(url: str, body: dict, *, ec: str,
                     headers: dict[str, str] | None = None, timeout: float = 45.0,
                     fresh: bool = False, cache_ttl: float = PRICE_TTL,
@@ -249,13 +274,13 @@ async def post_json(url: str, body: dict, *, ec: str,
             if status >= 400:
                 raise Transport(f"HTTP {status}: {text[:200]}")
 
-            ROUTER.record(ec, tier, True)
             res = FetchResult(data=data, status=status, tier_used=int(tier),
                               elapsed_ms=int((time.time() - t0) * 1000),
                               fetched_at=_now_iso(), attempts=attempts)
             if validate is not None and not validate(data):
                 raise ShapeDrift("Payload failed the caller's validity check.",
                                  hint="Silent 200 with an unusable body. Not cached.")
+            ROUTER.record(ec, tier, True)
             CACHE.put(ck, {"data": data, "tier": int(tier), "at": res.fetched_at},
                       ttl=cache_ttl)
             return res
@@ -265,7 +290,7 @@ async def post_json(url: str, body: dict, *, ec: str,
             last = e
             if not e.escalate:
                 raise
-            await _maybe_recover(ec)
+            await _maybe_recover(ec, e.kind)
             await asyncio.sleep(0.6 + random.random() * 0.6)
         except Exception as e:
             ROUTER.record(ec, tier, False)
@@ -275,6 +300,7 @@ async def post_json(url: str, body: dict, *, ec: str,
 
     assert last is not None
     last.details["attempts"] = attempts
+    _record_failure(ec, last)
     raise last
 
 

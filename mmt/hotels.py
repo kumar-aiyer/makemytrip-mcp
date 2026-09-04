@@ -111,14 +111,8 @@ async def search(city_code: str, check_in: str, check_out: str, *, adults: int =
                       adults=adults, rooms=rooms, child_ages=child_ages, limit=limit,
                       hotel_ids=hotel_ids, star_rating=star_rating)
 
-    def _valid(data: dict) -> bool:
-        if not isinstance(data, dict) or "response" not in data:
-            return False
-        hotels = flatten(data["response"])
-        return bool(hotels) and not all_prices_null(hotels)
-
     res = await post_json(C.SEARCH_HOTELS, body, ec=HOTEL_API, fresh=fresh,
-                          validate=_valid)
+                          validate=body_valid)
     data = res.data
     if not isinstance(data, dict) or "response" not in data:
         raise ShapeDrift("search-hotels returned no `response` object.")
@@ -147,6 +141,18 @@ def all_prices_null(hotels: list[dict]) -> bool:
     if not hotels:
         return False
     return all(not (h.get("priceDetail") or {}).get("price") for h in hotels)
+
+
+def body_valid(data: Any) -> bool:
+    """A hotel search response is usable when it parses. A genuinely empty result (a
+    wrong city code returns a valid-looking empty payload) is still a *valid* answer -
+    the honest response is "no hotels", surfaced as a warning - not a shape error. Only
+    a missing response object, or rows with every price null (the silent-200 trap), is
+    unusable."""
+    if not isinstance(data, dict) or "response" not in data:
+        return False
+    hotels = flatten(data["response"])
+    return not (hotels and all_prices_null(hotels))
 
 
 def summarise(h: dict) -> dict[str, Any]:

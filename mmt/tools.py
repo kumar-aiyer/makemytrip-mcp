@@ -60,7 +60,8 @@ def _obj(props: dict, required: list[str]) -> dict:
     "check_in": {**S_STR, "description": "ISO YYYY-MM-DD."},
     "check_out": {**S_STR, "description": "ISO YYYY-MM-DD."},
     "adults": S_INT, "rooms": S_INT,
-    "child_ages": {**_obj({}, []), "description": "Ages of children sharing a room."},
+    "child_ages": {"type": "array", "items": S_INT,
+                   "description": "Ages of children sharing a room."},
     "star_rating": {**S_INT, "description": "Filter to this star rating."},
     "limit": S_INT,
 }, ["city", "check_in", "check_out"]))

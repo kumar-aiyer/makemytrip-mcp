@@ -127,11 +127,8 @@ async def search(origin: str | dict, dest: str | dict, iso_date: str, *,
     if trip_type == "RT" and not return_date:
         raise BadInput("trip_type RT requires a return_date.")
 
-    def _valid(html: str) -> bool:
-        return bool(rsc.iter_objects(rsc.blob(html), CAB_RE))
-
     res = await get_text(url, ec=CAB_PAGE, wait_for="networkidle", fresh=fresh,
-                         validate=_valid)
+                         validate=body_valid)
     out = parse(res.text, url=url, iso_date=iso_date,
                 route=f"{o.get('city')} -> {d.get('city')}")
     if not out["cab_count"]:
@@ -142,6 +139,13 @@ async def search(origin: str | dict, dest: str | dict, iso_date: str, *,
             details=out)
     out.update(res.meta())
     return out
+
+
+def body_valid(html: str) -> bool:
+    """A cabs listing is usable when it carries the RSC stream. Zero cabs (a stale place
+    object, no vendors bidding) is a valid answer surfaced as EmptyValid; only a page
+    with no RSC data (an interstitial) is unusable."""
+    return bool(rsc.blob(html))
 
 
 def parse(html: str, *, url: str = "", iso_date: str = "",
