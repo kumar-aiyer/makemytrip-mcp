@@ -401,3 +401,87 @@ worth roughly a 3x speedup over per-call process spawning.
 Python can now drive a real acceptance run, with per-call timings and raw JSON captured for
 audit. An acceptance prompt should still name the commit it must run against - `mmt_version`
 against `git rev-parse HEAD` caught nothing this time only because it was checked first.
+
+---
+
+## Run 2026-09-05 (later) - BUG-13/14/15 fixed; fixing 13 exposed BUG-16
+
+Offline suites after the fixes: **139/139** parsers (up from 112 - four new regression
+tests), 19/19 version, 33/33 watch_server. All three verified live through
+`harness/mcp_client.py`.
+
+### BUG-13 fixed - a size cap that failed the call instead of skipping the cache
+
+The 2 MB `PAGE_SIZE_CAP` was enforced by raising `ShapeDrift` *after* the body had already
+been fetched, so a page that grew past it lost every tier at once. Two things were wrong:
+
+- **The cap belonged to the cache, not the fetch.** An oversized body is still a correct
+  answer. `fetch.get_text` now computes `cacheable = len(text) <= PAGE_SIZE_CAP` and skips
+  `CACHE.put`; it never raises. The cap moved to 8 MB as well, so ordinary large pages are
+  still cached rather than re-fetched every call.
+- **`PAGE_TIER_BYTE_CAP` was a constant nothing read.** The comment claimed page bytes were
+  budgeted separately; `grep` says otherwise - it was referenced exactly once, at its own
+  definition. So the *only* thing bounding resident memory was the hard reject. `Cache` now
+  actually tracks bytes (`_sizeof` counts whole-page `text`), decrements on eviction,
+  expiry, replacement and `clear`, and evicts LRU until both the entry and byte budgets
+  hold. `stats()` reports `bytes`. A single entry larger than the whole budget is kept
+  rather than evicted in a loop.
+
+Live: `mmt_hotel_rates` on the 2.6 MB Hyatt Centric page now returns **24 rate plans**.
+The tool went from dead to working.
+
+### BUG-14 fixed - a same-day round trip is refused, not relabelled
+
+`cabs.validate_trip()` is a new pure function, called first thing in `search()`, that
+rejects `return_date <= date` for `trip_type=RT` (and an unknown `trip_type`, and a
+non-ISO date). The measurement behind it: on goa->kulem, OW and same-day RT returned an
+identical 6 cabs at identical fares, while the same flag on bengaluru->goa moved the
+cheapest from 12,161 to 20,264. MakeMyTrip answers a same-day RT with the one-way listing
+under a `tripType=RT` url, and passing that back as a round-trip quote is BUG-12's failure
+mode - a wrong number wearing a right label. The error names the remedy: quote it as OW,
+because that is what those fares are.
+
+Note this is a real restriction, not just a guard: RT with a *later* return on the same
+40 km route returns a genuine `EmptyValid` (no vendor offers an overnight hire that short).
+
+### BUG-15 fixed - `\d+` matched the wrong half of "11.5"
+
+`TIME_RE` was `\*?(\d+)\s*hr`. Against `*11.5 hr(s)*` it did not truncate to 11 - the engine
+backtracked past `11.`, restarted at the `5`, and matched `5 hr`. An 11.5 hour drive was
+reported as 5, which is wrong by a factor of two and reads as perfectly plausible. Now
+`\*?(\d+(?:\.\d+)?)\s*hr`, parsed through a new pure `cabs.parse_summary()`, returning an
+int when whole so the common case stays `10` not `10.0`. Live: bengaluru->goa now reports
+`approx_hours: 11.5` for 603 km.
+
+### BUG-16 (new, OPEN, and it invalidates the itinerary) - hotel figures are PER NIGHT
+
+Fixing BUG-13 made `mmt_hotel_rates` usable, which finally settled the question the
+acceptance run had to leave open - and the answer is the opposite of what the code assumes.
+Same hotel, same room, only the stay length varying:
+
+| Property | 1 night | 2 nights | 6 nights |
+|---|---|---|---|
+| Hyatt Centric Candolim | 11,800 | 11,210 | 13,342 |
+| Baga Beach Hotel | 2,493 | - | **2,493** |
+
+Under the stay-total reading, nights 2-6 at the Hyatt cost 1,542 between them, and five
+extra nights at Baga Beach are free. **`all_in_inr` is a nightly rate.** It drifts a little
+with the range because MakeMyTrip shows the cheapest nightly rate available across it.
+
+Consequences, none of them fixed yet:
+
+- `mmt_hotel_search`'s `all_in_per_night_inr` divides a nightly rate by `nights`. It is
+  wrong by a factor of `nights` - 2,224 for a 5* Candolim room was never credible.
+- Every itinerary total built on it understates the hotel by roughly `nights - 1` times the
+  nightly rate. `harness/runs/2026-09-05/goa-itinerary.pdf` is wrong for this reason: it
+  carries 13,342 as a 6-night stay total. The order-of-magnitude corrected figure is nearer
+  80,000, which changes the trip total more than every other line combined.
+- The contract needs deciding, not just patching: rename to `nightly_all_in_inr`, drop the
+  bogus division, and either sum the real per-night rates or clearly label a
+  `nights x nightly` estimate. That is an interface change, so it is written down here
+  rather than smuggled into a bug-fix commit.
+
+This is the most valuable thing the acceptance run produced. It was invisible for two phases
+because the number looked plausible and nothing cross-checked it against a different stay
+length - the same shape as BUG-12, which is now three for three on "an unvalidated number is
+worse than a failing one".

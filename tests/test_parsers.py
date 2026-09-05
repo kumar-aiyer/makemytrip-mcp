@@ -387,13 +387,118 @@ def test_null_prices_through_fetch() -> None:
     asyncio.run(run())
 
 
+def test_cab_summary_hours() -> None:
+    """BUG-15 regression: fractional hours. `\d+` did not truncate 11.5 to 11 - it
+    backtracked past the decimal point and matched the 5, so an 11.5 hour drive was
+    reported as 5, which reads as plausible and is off by a factor of two."""
+    cases = [
+        ("Rates for *603 Kms* approx distance | *11.5 hr(s)* approx time", 603, 11.5),
+        ("Rates for *438 Kms* approx distance | *10 hr(s)* approx time", 438, 10),
+        ("Rates for *40 Kms* approx distance | *4 hr(s)* approx time", 40, 4),
+        ("Rates for *1,203 Kms* approx distance | *22.25 hr(s)* approx", 1203, 22.25),
+        ("", None, None),
+    ]
+    for text, km, hrs in cases:
+        got_km, got_hrs = CB.parse_summary(text)
+        check(f"cab summary: {km} km", got_km == km, f"got {got_km}")
+        check(f"cab summary: {hrs} hr", got_hrs == hrs, f"got {got_hrs}")
+    check("cab summary: whole hours stay int",
+          isinstance(CB.parse_summary("*10 hr(s)*")[1], int))
+
+
+def test_cab_trip_validation() -> None:
+    """BUG-14 regression: MakeMyTrip answers a same-day RT with the one-way listing,
+    so the tool must refuse the shape rather than relabel one-way fares."""
+    CB.validate_trip("2026-12-19", "OW", "")
+    CB.validate_trip("2026-12-19", "RT", "2026-12-20")
+    check("cab trip: OW and a real RT are accepted", True)
+    for dep, tt, ret, why in (
+            ("2026-12-19", "RT", "2026-12-19", "same-day RT"),
+            ("2026-12-19", "RT", "2026-12-18", "return before departure"),
+            ("2026-12-19", "RT", "", "RT with no return_date"),
+            ("2026-12-19", "XX", "", "unknown trip_type"),
+            ("19-12-2026", "OW", "", "non-ISO date")):
+        try:
+            CB.validate_trip(dep, tt, ret)
+            check(f"cab trip: rejects {why}", False)
+        except BadInput:
+            check(f"cab trip: rejects {why}", True)
+
+
+def test_cache_byte_budget() -> None:
+    """BUG-13's other half: PAGE_TIER_BYTE_CAP was a constant nothing read, so the
+    only thing bounding memory was a hard reject of big pages."""
+    from mmt.cache import Cache
+
+    c = Cache(max_entries=100, byte_cap=1000)
+    for i in range(5):
+        c.put(f"k{i}", {"text": "x" * 300, "tier": 2, "at": ""}, ttl=60)
+    check("cache: byte cap evicts LRU", c.stats()["bytes"] <= 1000,
+          str(c.stats()))
+    check("cache: newest survives eviction", c.get("k4") is not None)
+    check("cache: oldest evicted", c.get("k0") is None)
+
+    c2 = Cache(max_entries=100, byte_cap=10_000)
+    c2.put("a", {"text": "y" * 500, "tier": 2, "at": ""}, ttl=60)
+    c2.put("a", {"text": "y" * 100, "tier": 2, "at": ""}, ttl=60)
+    check("cache: replacing a key does not double-count",
+          c2.stats()["bytes"] == 100, str(c2.stats()))
+    check("cache: entry count is right after replace", c2.stats()["entries"] == 1)
+    c2.clear()
+    check("cache: clear resets the byte count", c2.stats()["bytes"] == 0)
+
+    c3 = Cache(max_entries=100, byte_cap=10)
+    c3.put("only", {"text": "z" * 5000, "tier": 2, "at": ""}, ttl=60)
+    check("cache: a single oversized entry is kept, not spun on",
+          c3.get("only") is not None)
+
+
+def test_oversize_body_through_fetch() -> None:
+    """BUG-13 regression: a body over PAGE_SIZE_CAP must still be RETURNED - it just
+    does not get cached. It used to raise ShapeDrift on every tier, which left
+    mmt_hotel_rates with no working path the day a detail page grew to 2.6 MB."""
+    import asyncio
+    from unittest.mock import patch
+
+    from mmt import fetch as F
+    from mmt.cache import PAGE_SIZE_CAP
+
+    body = "<html>" + ("q" * (PAGE_SIZE_CAP + 1000)) + "</html>"
+
+    async def run():
+        def fake_t0(url, h, t):                     # tier 0 is called off-thread
+            return 200, body
+
+        async def fake_t1(url, h, t):               # tier 1 is awaited
+            return 200, body
+
+        async def never(*a, **k):                   # a render here means the cheap
+            raise AssertionError("escalated to the browser tier")   # tiers regressed
+
+        with patch.object(F, "_t0_get", fake_t0), patch.object(F, "_t1_get", fake_t1),              patch.object(F, "_t2_get", never), patch.object(F, "ROUTER", Router()):
+            F.CACHE.clear()
+            url = "https://oversize.test"
+            res = await F.get_text(url, ec=TRAIN_PAGE)
+            check("oversize: returned, not raised", len(res.text) == len(body))
+            check("oversize: not cached",
+                  F.CACHE.get(F.cache_key("GET:" + TRAIN_PAGE, {"url": url})) is None)
+            res2 = await F.get_text(url, ec=TRAIN_PAGE)
+            check("oversize: re-fetches rather than serving a stale hit",
+                  res2.cached is False)
+            F.CACHE.clear()
+
+    asyncio.run(run())
+
+
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
                test_cabs, test_cab_urls, test_train_bad_date, test_flight_airports,
                test_flight_urls, test_flight_stream, test_flight_stream_junk,
                test_router, test_validators,
-               test_recover_gating, test_null_prices_through_fetch):
+               test_recover_gating, test_null_prices_through_fetch,
+               test_cab_summary_hours, test_cab_trip_validation,
+               test_cache_byte_budget, test_oversize_body_through_fetch):
         try:
             fn()
         except Exception as e:

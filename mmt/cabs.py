@@ -43,7 +43,61 @@ ALIASES = {"cochin": "kochi", "rameshwaram": "rameswaram", "ernakulam": "kochi"}
 CAB_RE = re.compile(r'\{\s*"type"\s*:\s*"CAB"\s*,\s*"data"\s*:\s*\{')
 SUMMARY_RE = re.compile(r'"summaryText"\s*:\s*"([^"]+)"')
 DIST_RE = re.compile(r"\*?(\d[\d,]*)\s*Kms?\*?", re.I)
-TIME_RE = re.compile(r"\*?(\d+)\s*hr", re.I)
+# The hour figure is fractional on longer routes ("*11.5 hr(s)*"). Matching only
+# \d+ did not merely truncate it - the engine backtracked past "11." and matched the
+# "5" after the decimal point, so a 11.5 hour drive was reported as 5.
+TIME_RE = re.compile(r"\*?(\d+(?:\.\d+)?)\s*hr", re.I)
+
+
+def validate_trip(iso_date: str, trip_type: str, return_date: str) -> None:
+    """Reject trip shapes MakeMyTrip cannot actually price. Pure; raises BadInput.
+
+    A round trip whose return is the departure day is the trap. MakeMyTrip does not
+    refuse it - it answers with the ONE-WAY listing, the same vendors at the same
+    fares, while the URL still says tripType=RT. Measured 2026-09-05 on
+    goa->kulem: OW and same-day RT returned an identical 6 cabs, cheapest 2145 both
+    times, where the same flag on bengaluru->goa (a real multi-day return) moved the
+    cheapest fare 12,161 -> 20,264. Passing that back as a round-trip quote is a wrong
+    number wearing a right label, so it is refused here instead.
+    """
+    try:
+        dep = date.fromisoformat(iso_date)
+    except ValueError:
+        raise BadInput("date must be ISO YYYY-MM-DD") from None
+    if trip_type not in ("OW", "RT"):
+        raise BadInput(f"trip_type must be OW or RT, not {trip_type!r}.")
+    if trip_type != "RT":
+        return
+    if not return_date:
+        raise BadInput("trip_type RT requires a return_date.")
+    try:
+        ret = date.fromisoformat(return_date)
+    except ValueError:
+        raise BadInput("return_date must be ISO YYYY-MM-DD") from None
+    if ret <= dep:
+        raise BadInput(
+            f"return_date {return_date} must be after the departure date {iso_date}. "
+            f"MakeMyTrip prices a same-day round trip as a one-way and returns the "
+            f"one-way fares under a tripType=RT url.",
+            hint="For an out-and-back on one day, quote it as OW - that is what the "
+                 "same-day RT fares actually are.")
+
+
+def parse_summary(summary: str) -> tuple[int | None, float | None]:
+    """Distance in km and approximate hours out of a SEARCH_SUMMARY summaryText.
+
+    Live shape: `Rates for *603 Kms* approx distance | *11.5 hr(s)* approx time`.
+    Hours come back as an int when whole so the common case stays 10 rather than 10.0.
+    """
+    km = DIST_RE.search(summary or "")
+    hrs = TIME_RE.search(summary or "")
+    distance = int(km.group(1).replace(",", "")) if km else None
+    hours: float | None = None
+    if hrs:
+        hours = float(hrs.group(1))
+        if hours.is_integer():
+            hours = int(hours)
+    return distance, hours
 
 
 def known_places() -> dict[str, dict[str, Any]]:
@@ -137,12 +191,11 @@ def listing_url(origin: dict, dest: dict, iso_date: str, *, pickup_time: str = "
 async def search(origin: str | dict, dest: str | dict, iso_date: str, *,
                  pickup_time: str = "10:00", trip_type: str = "OW",
                  return_date: str = "", fresh: bool = False) -> dict[str, Any]:
+    validate_trip(iso_date, trip_type, return_date)
     o = origin if isinstance(origin, dict) else resolve_place(origin)
     d = dest if isinstance(dest, dict) else resolve_place(dest)
     url = listing_url(o, d, iso_date, pickup_time=pickup_time, trip_type=trip_type,
                       return_date=return_date)
-    if trip_type == "RT" and not return_date:
-        raise BadInput("trip_type RT requires a return_date.")
 
     # funnel_url: /cabs/listing is Akamai-stubbed for a browser that arrives cold.
     res = await get_text(url, ec=CAB_PAGE, wait_for="domcontentloaded", fresh=fresh,
@@ -189,10 +242,7 @@ def parse(html: str, *, url: str = "", iso_date: str = "",
         })
 
     sm = SUMMARY_RE.search(blob)
-    summary = sm.group(1) if sm else ""
-    km = DIST_RE.search(summary)
-    hrs = TIME_RE.search(summary)
-    distance = int(km.group(1).replace(",", "")) if km else None
+    distance, hours = parse_summary(sm.group(1) if sm else "")
 
     for c in cabs:
         if distance and isinstance(c.get("all_in_inr"), (int, float)):
@@ -202,7 +252,7 @@ def parse(html: str, *, url: str = "", iso_date: str = "",
     return {
         "route": route, "date": iso_date, "url": url,
         "distance_km": distance,
-        "approx_hours": int(hrs.group(1)) if hrs else None,
+        "approx_hours": hours,
         "cab_count": len(cabs), "cabs": cabs,
         "cheapest": cabs[0] if cabs else None,
     }

@@ -314,14 +314,13 @@ async def get_text(url: str, *, ec: str, headers: dict[str, str] | None = None,
             if status >= 400:
                 raise Transport(f"HTTP {status} from MakeMyTrip.")
 
-            # Whole-HTML bodies are capped so a cache full of pages cannot balloon
-            # into hundreds of MB resident (F5).
-            if len(text) > PAGE_SIZE_CAP:
-                raise ShapeDrift(
-                    f"HTTP 200 body of {len(text):,} bytes exceeds the "
-                    f"{PAGE_SIZE_CAP:,}-byte page cache cap.",
-                    hint="MakeMyTrip changed the page, or a proxy wrapped it. This is "
-                         "not cached, so the next call re-fetches fresh.")
+            # A body too big to be worth holding is still a perfectly good answer:
+            # it skips the cache, it does not fail the call. Refusing the fetch here
+            # was BUG-13 - a hotel detail page grew past the cap and mmt_hotel_rates
+            # lost every tier at once, reported as shape_drift when nothing about the
+            # page shape had changed. The resident total is bounded inside the cache
+            # by PAGE_TIER_BYTE_CAP (F5).
+            cacheable = len(text) <= PAGE_SIZE_CAP
 
             res = FetchResult(text=text, status=status, tier_used=int(tier),
                               elapsed_ms=int((time.time() - t0) * 1000),
@@ -334,8 +333,9 @@ async def get_text(url: str, *, ec: str, headers: dict[str, str] | None = None,
                 raise ShapeDrift("Payload failed the caller's validity check.",
                                  hint="Silent 200 with an unusable body. Not cached.")
             ROUTER.record(ec, tier, True)
-            CACHE.put(ck, {"text": text, "tier": int(tier), "at": res.fetched_at},
-                      ttl=cache_ttl)
+            if cacheable:
+                CACHE.put(ck, {"text": text, "tier": int(tier), "at": res.fetched_at},
+                          ttl=cache_ttl)
             return res
         except MMTError as e:
             ROUTER.record(ec, tier, False)
