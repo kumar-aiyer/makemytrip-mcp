@@ -51,16 +51,24 @@ succeed, and GR1/GR2 are dead again.
 Remove **only** that key. Do not reset `.state/`: `bengaluru`, `goa` and `panaji` are
 preconditions, and the `device_id` must stay stable (politeness rule).
 
+Keep **two** snapshots. The obvious one-liner snapshots before it pops, which leaves the
+snapshot containing `kulem` — and then the Step 5 diff shows no change and hides the
+`+kulem` that is the evidence GR2 fired. Write the baseline *after* the edit:
+
 ```python
-# python - , from the repo root. Doubles as the Step 1.5 snapshot.
+# python - , from the repo root.
 import json, pathlib, shutil
+run = pathlib.Path("harness/runs/<date>"); run.mkdir(parents=True, exist_ok=True)
 p = pathlib.Path(".state/data.json")
-shutil.copy(p, "harness/runs/<date>/state-before.json")
+shutil.copy(p, run / "state-before.json")          # as found, still has kulem
 d = json.loads(p.read_text())
 d["cab_places"].pop("kulem", None)
 p.write_text(json.dumps(d, indent=2))
-print("places now:", sorted(d["cab_places"]))     # expect bengaluru, goa, panaji
+shutil.copy(p, run / "state-baseline.json")        # what the run starts from
+print("places now:", sorted(d["cab_places"]))      # expect bengaluru, goa, panaji
 ```
+
+**Step 5 diffs against `state-baseline.json`**, not `state-before.json`.
 
 Close any other client of this server first. Two `server.py` processes race for the Chrome
 profile lock, and both `.state` writers can clobber each other. In particular, do not leave
@@ -199,7 +207,7 @@ same-day round trips", it was making the tool refuse to answer one.
 
 ## Step 5 — close out
 
-1. Diff `.state/data.json` against the snapshot. Expect `+kulem` **again** — this time
+1. Diff `.state/data.json` against **`state-baseline.json`**. Expect `+kulem` — this time
    registered by the model, which is the evidence that GR2 actually fired.
 2. Record the run in `findings.md` (`## Run <date>`): audit result, tiers and latencies, PDF
    path, budget consumed, state delta.
