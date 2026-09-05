@@ -20,7 +20,7 @@ CHANNEL_PREFERENCE = ("chrome", "msedge", None)  # None => bundled chromium
 
 @dataclass
 class SessionConfig:
-    headless: bool = os.environ.get("MMT_HEADFUL", "") != "1"
+    headless: bool = os.environ.get("MMT_HEADLESS", "0" if (os.environ.get("MMT_HEADFUL", "") == "1" or os.name == "nt") else "1").lower() in ("1", "true", "yes")
     channel: str | None = os.environ.get("MMT_BROWSER_CHANNEL") or None
     idle_timeout_s: float = float(os.environ.get("MMT_IDLE_TIMEOUT", "300"))
     nav_timeout_ms: int = 45_000
@@ -73,7 +73,10 @@ class Session:
             await self._launch()
             self._touch()
         if not self._warm:
-            await self.warmup()
+            try:
+                await self.warmup()
+            except Exception:
+                pass
         return self._ctx
 
     async def _launch(self) -> None:
@@ -128,18 +131,38 @@ class Session:
         """Navigate the homepage once to obtain Akamai clearance."""
         if self._warm and not force:
             return {"ok": True, "skipped": True}
+        if self._ctx is None:
+            await self.ensure()
+            if self._warm and not force:
+                return {"ok": True, "skipped": True}
         async with self._lock:
             if self._warm and not force:
                 return {"ok": True, "skipped": True}
+            if self._ctx is None:
+                await self._launch()
+                self._touch()
             t0 = time.time()
             page = await self._ctx.new_page()
+            nav_err: Exception | None = None
             try:
                 await page.goto(C.HOME, wait_until="domcontentloaded")
                 with contextlib.suppress(Exception):
                     await page.wait_for_load_state("networkidle", timeout=15_000)
+            except Exception as e:
+                nav_err = e
             finally:
                 with contextlib.suppress(Exception):
                     await page.close()
+            if nav_err is not None:
+                return {
+                    "ok": False,
+                    "error": f"{type(nav_err).__name__}: {nav_err}",
+                    "had_abck": False,
+                    "had_bm_sz": False,
+                    "elapsed_ms": int((time.time() - t0) * 1000),
+                    "ua": self.ua,
+                    "browser": self.browser_desc,
+                }
             names = {c["name"] for c in await self._ctx.cookies()}
             self._warm = True
             return {
