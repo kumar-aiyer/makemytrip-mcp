@@ -14,57 +14,52 @@ Politeness: one call at a time, no loops, no scheduled polling. This whole proto
 
 ## Phase 0 — Environment (answers: does the browser stack get past Akamai here?)
 
-1. `mmt_setup_status`
-   - Expect: `ready: true`, a real browser (chrome/msedge), warmup result present.
-   - If `ready: false`: read the `next_steps` and do them (e.g. `python -m playwright
-     install chromium`).
-2. `mmt_selftest quick`
-   - Expect: `hotel_search` check `ok: true`; `router_health.hotel_api.tier_used` sane.
-   - If the browser stack 403s from this machine at every tier, stop: that is an
-     environment/network finding, not a code bug.
+1. `mmt_setup_status` → **DONE 2026-09-05**: `ready: true`, `headless: false`. (BUG-1 fixed.)
+2. `mmt_selftest quick` → sanity check of tier/health. Run again before Phase 2 to confirm
+   nothing regressed.
 
 ## Phase 1 — Core hotel path
 
-3. `mmt_capabilities` — expect booking windows listed.
-4. `mmt_hotel_search(city="Kochi", check_in="<today+30>", check_out="<today+32>", limit=3)`
-   - Verify: every priced hotel has `base_inr`/`tax_inr`/`all_in_inr` with
-     `base + tax == all_in`; a per-night figure is present.
-5. Pick the cheapest hotel's `id`, then `mmt_hotel_rates(hotel_id=..., city="Kochi",
-   check_in=..., check_out=...)`
-   - This exercises the T2 page-render path (`_t2_get`). Verify room plans parsed with
-     base/tax/all-in arithmetic.
-6. `mmt_price_itinerary(stays=[{...}])` for two legs with the SAME dates.
-   - Verify the server-side `total` == sum of the legs.
+3. `mmt_capabilities` — **DONE**: booking windows + known_gaps confirmed.
+4. `mmt_hotel_search(city="goa", check_in="2026-12-15", check_out="2026-12-21", adults=2, limit=5)`
+   - **DONE**: 5 priced hotels. Hyatt Centric base=11,500 tax=1,842 all_in=13,342 (6N),
+     tier_used=2. `base + tax == all_in` clean on every row.
+5. `mmt_hotel_rates` for a picked property → still OBEY: room plans with base/tax/all-in.
+6. `mmt_price_itinerary(stays=[...])` for two legs → still OBEY: server-side `total` == sum.
 
 ## Phase 2 — Trains & cabs
 
-7. `mmt_train_search(origin="MDU", dest="MS", date="<today+30>")`
-   - Verify trains parse with per-class `availablityStatus`, `confirm_probability_pct`.
-8. `mmt_train_search(origin="MDU", dest="MS", date="<today+90>")`
-   - Verify kind == `not_in_window` and a `booking_opens` field is present.
-9. `mmt_station_city(origin="MDU", dest="MS")` — verify both city codes returned.
-10. `mmt_cab_quote(origin="kochi", dest="rameswaram", date="<today+200>")`
-    - Verify `cab_count > 0`, `distance_km` present, each cab has
-      `base_inr + tax_fees_inr == all_in_inr` and a per-km figure.
+7. `mmt_train_search(origin="Bengaluru", dest="goa", date="2026-12-15")`
+   - **DONE**: not_in_window, route SBC-MAO, booking_opens=2026-10-16. (BUG-4 fixed.)
+8. `mmt_station_city(origin="SBC", dest="MAO")` → **TO DO**: confirm city codes flow.
+9. `mmt_cab_find_place(query="goa")` and `("Panaji")`
+   - **DONE**: places registered. (BUG-5/6 fixed.)
+10. `mmt_cab_quote(origin="bengaluru", dest="goa", date="<today+60..200>")`
+    - **TO DO (handed to Phase 1 closure)**: places are registered; the quote was never run.
+    - Verify `cab_count > 0`, `distance_km` present, `base + tax_fees == all_in`, per-km.
+    - Zero cabs for a real route inside the window = BUG (log as BUG-8).
+
+## Phase 2b — Flights (the open item, BUG-7)
+
+- `mmt_flight_search(origin="BLR", dest="GOI", date="2026-12-15")` → **DONE (blocked)**:
+  returns an honest blocked/experimental result. Unblock paths in
+  `harness/CLAUDECODE-PHASE1.md` (manual profile warm) or a captured fixture.
 
 ## Phase 3 — Error taxonomy
 
-11. `mmt_hotel_search(city="not-a-city", ...)` → kind `bad_input`, lists known cities.
-12. `mmt_train_search(origin="MDU", dest="MS", date="not-a-date")` → kind `bad_input`.
-13. `mmt_cab_quote(origin="nosuchplace", ...)` → kind `unregistered_place`, names the
-    remedy (`mmt_cab_add_place`).
-14. `mmt_cab_quote(origin="kochi", dest="rameswaram", date="<ok>", trip_type="RT")`
-    without `return_date` → kind `bad_input` (RT requires return_date).
-15. After each error, the server must still respond to a normal call (alive check).
+9. `mmt_hotel_search(city="not-a-city", ...)` → kind `bad_input`, lists known cities.
+10. `mmt_train_search(origin="MDU", dest="MS", date="not-a-date")` → kind `bad_input`.
+11. `mmt_cab_quote(origin="nosuchplace", ...)` → kind `unregistered_place`, names the remedy.
+12. `mmt_cab_quote(origin="kochi", dest="rameswaram", date="<ok>", trip_type="RT")`
+    without `return_date` → kind `bad_input`.
+13. After each error, the server must still respond to a normal call (alive check).
+    → Mostly covered across the live work; sweep again at Phase 2 close.
 
-## Phase 4 — Claude-shaped composite
+## Phase 4 — Claude-shaped composite (the acceptance test)
 
-16. Answer as a user: *"What would four nights in Kochi in December cost, and how does
-    the cab from Kochi to Rameswaram compare?"*
-    - Do this the way a real model would (call `mmt_capabilities` first, then search,
-      then the cab).
-    - Audit the answer: base AND tax quoted separately; stay-total vs per-night not
-      confused; limitations stated plainly; no empty result reported as "nothing found".
+The full Phase 2 protocol is `harness/PHASE2-TASKS.md` — run the canonical prompt in a fresh
+Cline session with a reasoning model and audit against the 19-point checklist in
+`harness/prompts/goa-itinerary.md`.
 
 ---
 

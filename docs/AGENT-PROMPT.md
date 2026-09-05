@@ -65,18 +65,22 @@ plainly rather than silently swallowed.
 | `server.py` — MCP stdio protocol, 13 tools | **Verified**: initialize, tools/list, tools/call, unknown method, unknown tool, clean shutdown. `tools/list` in <0.2 s with no browser |
 | `mmt/rsc.py` — RSC unwrapping | **Verified** against fixtures, including chunks split mid-line and `$ref` resolution |
 | `mmt/state.py` — `__INITIAL_STATE__` extraction | **Verified**, including a `}` inside a quoted string |
-| `mmt/hotels.py` — body builder, flatten, summarise, rate-plan parser, URL builder | **Verified** offline. `all_in == base + tax`; `TOTAL_AMOUNT` correctly ignored |
-| `mmt/trains.py` — parser, 60-day window, station lookup | **Verified** offline, including the `availablity` misspelling |
-| `mmt/cabs.py` — parser, place registry, URL builder | **Verified** offline, compact and pretty-printed payloads |
-| `mmt/router.py` — tiering and circuit breaker | **Verified** offline: degrade, open, recover |
-| `mmt/errors.py`, `cache.py`, `fetch.py`, `session.py` | Written, exercised indirectly; **not yet live-tested** |
-| `mmt/flights.py` — `parse_stream` | **Field names inferred. Unproven.** See §6 |
-| `mmt/harvest.py` — cab place harvesting | **Written from the site's structure, never executed.** See §7 |
-| `tests/test_parsers.py` | 63 assertions, all passing, no network or browser needed |
-| `tools/probe.py` | Live gate harness — never yet run against the real site |
+| `mmt/hotels.py` — body builder, flatten, summarise, rate-plan parser, URL builder | **Verified offline AND live (T2)**: hotel search Goa returns real priced hotels (`all_in == base + tax`) |
+| `mmt/trains.py` — parser, 60-day window, station lookup | **Verified offline AND live**: `resolve_station("goa") == "MAO"`; SBC→MAO 2026-12-15 → `not_in_window`, `booking_opens=2026-10-16` |
+| `mmt/cabs.py` — parser, place registry, URL builder | **Verified offline AND live**: places harvested for goa, panaji, kochi, rameswaram; regional-priority matcher |
+| `mmt/router.py` — tiering and circuit breaker | **Verified** offline: degrade, open, recover. Ceilings updated: HOTEL_API→PAGE (T2-POST), FLIGHT_API→PAGE |
+| `mmt/errors.py`, `mmt/cache.py`, `mmt/fetch.py`, `mmt/session.py` | **Verified live**: warmup NoneType crash fixed (PR #1); `_t2_post` in-page fetch added (BUG-3); cache validate-gate |
+| `mmt/fetch.py::_t2_post` | **New (BUG-3 fix)**: clear_cookies → goto HOME → in-page `fetch` POST with browser-managed headers stripped. The only hotel-POST path from this network |
+| `mmt/harvest.py` — cab place harvesting | **Verified live (BUG-5/6 fixes)**: dismisses login modal, clicks the from-city label, types into the react-autosuggest overlay, captures `autocomplete/v3` responses, prefers regional matches |
+| `mmt/flights.py` — `parse_stream` | **Field names inferred. UNPROVEN — and currently UNREACHABLE from automation.** See BUG-7. |
+| `tests/test_parsers.py` | **78 assertions, all passing**, no network or browser needed |
+| `tools/probe.py` | Live gate harness — superseded by `harness/LIVE-TEST-PLAN.md` + the Cline registered server |
 
-Run `python tests/test_parsers.py` before touching anything. If it is not 63/63, fix that
+Run `python tests/test_parsers.py` before touching anything. If it is not 78/78, fix that
 first: something in the environment is wrong.
+
+**All of Phase 1's original checklist is now done except flights.** The bug log,
+evidence chain and unblock paths are in `harness/findings.md` (BUG-1..BUG-7).
 
 ---
 
@@ -84,49 +88,36 @@ first: something in the environment is wrong.
 
 ### Phase 1 — establish a live baseline
 
-```bash
-python -m pip install playwright
-python tools/probe.py
-```
-
-**Do this from the user's laptop, on a residential connection.** MakeMyTrip's CDN answers
-datacenter IPs with `403 AkamaiGHost` — verified — so a cloud VM, CI runner or container will
-fail before any of this code matters. If every gate 403s, check where you are running before
-debugging anything else.
-
-Record which gates pass. Gates G0–G3, G5, G7, G8 should pass on a healthy machine. G4
-(flights) is expected to fail or return an empty parse — that is Phase 2.
+**DONE 2026-09-04/05.** Hotels, trains and cabs verified live; 78 offline tests pass.
+The remaining open item — flights — is thrown to a ClaudeCode session via
+`harness/CLAUDECODE-PHASE1.md` (same-profile manual warm, or captured-fixture parser rewrite).
+Probe from the user's laptop on a residential connection only.
 
 ### Phase 2 — finish flights (the main open work)
 
-`mmt/flights.py::parse_stream` guesses at itinerary field names. Fix it properly:
+`mmt/flights.py::parse_stream` still guesses at itinerary field names, and — more
+fundamentally — the search-stream endpoint refuses every automated path we tried from this
+network (BUG-7). Do **not** re-run the failed experiments (they are catalogued in
+`mmt/config.py` and `harness/findings.md`). Follow `harness/CLAUDECODE-PHASE1.md` and use one
+of the two documented unblock paths:
 
-1. Call `mmt_flight_search` and capture the raw stream. When nothing parses, the tool already
-   returns `raw_head`; for the full body, temporarily write `res.text` to
-   `tests/fixtures/flight_stream.json`.
-2. If it 403s with `Missing Header <x>`, add `<x>` to `config.flight_headers()`. The error
-   names it. Known-good so far: `mcid`, `device-id`, `app-ver`.
-3. Read the fixture. Find where itineraries actually live and what the fare, airline, flight
-   number, times, duration and stop count are really called.
-4. **Write the fixture test first**, then rewrite `parse_stream` against it. Delete the
-   heuristic key-guessing entirely — do not leave both paths in.
-5. Extend `mmt_flight_search`'s docstring to drop the "experimental" caveat only once G4
-   passes.
+1. **Same-profile manual warm**: launch headed Chrome with `--user-data-dir=<state>/chrome-profile`,
+   search MMT flights as a human, close. The preflight cache + Akamai sensor state may then make
+   `mmt_flight_search` work. If it does, wire the header set from `config.py` into the search.
+2. **Captured fixture**: have the user copy a real `search-stream` response from their browser's
+   DevTools into `tests/fixtures/flight_stream.json`; write the fixture test first, then rewrite
+   `parse_stream` from the verified field names; delete the heuristic key-guessing.
+3. Add `goa north`/`mopa` → `GOX` to `AIRPORTS` (MMT splits Goa into GOX North + GOI South).
+4. Drop the "experimental" caveat in `mmt_flight_search` only once a live call returns verified
+   itineraries.
 
 ### Phase 3 — finish cab place harvesting
 
-`mmt/harvest.py::harvest_place` drives MakeMyTrip's cab search form to capture a place object
-with a Google `place_id`, because no autosuggest endpoint exists. It has never been run.
-
-Run it with headed mode (default on Windows; `MMT_HEADFUL=1` on Linux) and watch. Expect to adjust: the selector for the location field,
-the URL fragment that identifies the autosuggest response, and the timing. The field is
-genuinely flaky — the overlay input sometimes does not take focus, so the click-wait-type
-sequence is retried once, and **nothing must be interleaved between the click and the type**
-or the overlay closes.
-
-If harvesting proves unreliable, that is acceptable: `mmt_cab_add_place` (paste a URL) is the
-documented fallback and always works. Say so in the tool's own output rather than failing
-opaquely.
+**DONE 2026-09-05 (BUG-5/6).** `harvest_place` now: dismisses the login modal
+(`commonModal__close`) and banner, clicks `label[for='fromCity']` to open the react-autosuggest
+overlay, types into it, captures the `cabs.makemytrip.com/autocomplete/v3` response, and selects
+by regional priority rather than blind ArrowDown+Enter. Places for goa/panaji/kochi/rameswaram
+are registered. `mmt_cab_add_place` (paste a URL) remains the documented fallback.
 
 ### Phase 4 — resilience gates
 
@@ -239,9 +230,12 @@ fails silently — which is precisely the failure mode this whole design exists 
 6. Every price path returns base, tax and all-in separately.
 7. `mmt_price_itinerary` sums the legs it just fetched and returns the total in the same
    object.
-8. `.gitignore` still excludes `.state/`, `chrome-profile/`, `diagnostics/` and `data.json` —
-   diagnostics dumps contain full response bodies.
+8. `.gitignore` still excludes `.state/`, `chrome-profile/`, `diagnostics/` and `data.json`.
+   `diagnostics/failures.jsonl` is metadata only (endpoint, kind, message, tiers).
 9. README's "where it must run" note is still accurate for the chosen host.
+10. Phase 2 acceptance passed: the reasoning-model run in `harness/PHASE2-TASKS.md` satisfied
+    every mandatory honesty + gap-recovery gate, or each failure is logged in
+    `harness/findings.md` with a tool-side fix.
 
 ---
 
@@ -260,11 +254,13 @@ fails silently — which is precisely the failure mode this whole design exists 
 
 ## 10. Open questions — surface these, do not silently decide
 
-1. Do Cowork plugins execute natively on the user's machine or in a sandbox? Determines
-   whether the Cowork route works at all (§4 Phase 5).
-2. What is the real flight stream shape? Until answered, the tool is experimental.
-3. Is `harvest_place` reliable enough to be the primary path, or does the paste-a-URL fallback
-   become the documented default?
+1. Does the same-profile manual warm (opening MMT flights once in `<state>/chrome-profile`)
+   actually unblock `mmt_flight_search`? Documented as Path A; unproven. Tested via
+   `harness/CLAUDECODE-PHASE1.md`.
+2. What is the real flight stream shape? Until Path A or B succeeds, `parse_stream` is
+   unproven and the tool stays experimental.
+3. Is `harvest_place` reliability acceptable as the primary path, or does the paste-a-URL
+   fallback become the documented default? Currently the primary path works for goa/panaji.
 4. Does state under `${CLAUDE_PLUGIN_ROOT}/.state` survive a plugin update? If not, saved cab
    places are lost on upgrade and `mmt_cab_add_place` should say where they live.
 

@@ -16,6 +16,13 @@
 | HTTP 200, hotels listed, every price `null` | `expData` / `featureFlags` trimmed | Restore both complete in `mmt/config.py`. Surfaces as `null_prices` |
 | 403 from everything, all tiers | Datacenter IP, or the client IP is flagged | Run from a residential connection. Verified: cloud VMs get `403 AkamaiGHost` |
 | `blocked` at T1, works at T2 | Akamai wants a rendered challenge | Nothing to do — the router escalates. Persistent T2 means slow but working |
+| Hotel search: T1 POST → body starts `200-OK` | `ctx.request.post` is Akamai-stubbed on `mapi` | Expected from this network. The router escalates to T2-POST (in-page fetch), which works |
+| 403 `Missing Header <x>` on flights | Flight API gates on a `flight_headers()` member | Those headers are browser/session-generated; see BUG-7. Not fixable by editing config alone |
+| `200-ok` shown on `/flight/search` results page | Akamai stub replaces the results-page body | The flight JS never runs → no search-stream call. Use the documented unblock paths (BUG-7) |
+| Cab field won't focus / "Could not focus" | A login modal (`commonModal__close`) intercepts clicks | Already handled by `_dismiss_popups` in `harvest.py`. If it recurs, re-run the DOM diagnostic |
+| Cab place registered is the wrong city (e.g. Goalpara for "goa") | Prefix/substring matcher beat a regional hit | Matcher now prefers places whose `secondary_text` contains the query. Re-harvest to overwrite |
+| `unknown station GOA` | "goa" once bypassed the STATIONS dict as a 3-char alpha | Fixed — dict lookup precedes the bypass. If it recurs, check the resolver ordering |
+| Empty result for a real city | Wrong locus code | The tool warns; check `cityLocationDetail` |
 | Hotels missing from the response | Shape moved off `personalizedSections[].hotels` | `mmt/hotels.py::flatten` |
 | `Missing Header <x>` (403) on flights | The flights gate wants another header | Add `<x>` to `config.flight_headers()` — the error names it |
 | Detail page has no `__INITIAL_STATE__` | Interstitial, or the page changed | Router escalates to T2; if T2 also fails, `mmt_hotel_search` still gives property-level pricing |

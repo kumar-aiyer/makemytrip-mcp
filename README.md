@@ -20,7 +20,7 @@ Runs anywhere that speaks MCP over stdio: **Claude Cowork** (as a plugin), **Ope
 | `mmt_find_hotel_id` | Property name → MakeMyTrip hotelId |
 | `mmt_hotel_rates` | One property → every room type and rate plan, with meal plan and cancellation |
 | `mmt_price_itinerary` | A multi-stop trip → per-leg table **and a total summed server-side** |
-| `mmt_flight_search` | Route + date → fares *(experimental)* |
+| `mmt_flight_search` | Route + date → fares *(experimental — see note below)* |
 | `mmt_train_search` | Route + date → trains with live per-class waitlist status, fare, confirmation odds |
 | `mmt_station_city` | Station codes → city codes, tying a rail leg to its hotel |
 | `mmt_cab_quote` | Two places + date → every vehicle class, base/tax/all-in **and per-km**; optional `return_date` for round trips |
@@ -54,13 +54,15 @@ code matters. Laptop or desktop: fine.
 
 ## How it works, briefly
 
-Three execution tiers, chosen per endpoint by a circuit-breaking router:
+Three execution tiers, chosen per endpoint by a circuit-breaking router, plus an
+in-page-fetch POST path for the hotel JSON API:
 
 | Tier | Mechanism | Used for |
 |---|---|---|
 | 0 | Plain `urllib` | The one JSON API with no bot sensor in front of it |
 | 1 | Playwright's `context.request` — the browser's network stack, no page rendering | **Default.** Real TLS fingerprint and cookies at HTTP speed |
 | 2 | Full page render | Bot-check interstitials, and driving forms |
+| 2-POST | Full render + in-page `fetch()` | The hotel search JSON API from this network (T1's POST is Akamai-stubbed) |
 
 Tier 1 is the design's centre of gravity: it issues requests through a real Chromium without
 paying for rendering, which is what makes an approach that would otherwise be blocked both
@@ -81,11 +83,18 @@ Documented at length in [docs/RUNBOOK.md](docs/RUNBOOK.md); the short version:
   ahead. Cab pricing has no such limit — dates months out quote fine.
 - **`availablityStatus`** is misspelled in MakeMyTrip's payload. Correcting it yields `None`
   for every train.
+- **Flights are currently blocked from automation on this machine.** The search-stream API
+  demands a session-generated auth token plus a header set that only a real user's browser
+  session can obtain (CORS preflight grant). `mmt_flight_search` returns an honest `blocked`
+  result naming the cause. Two unblock paths exist (same-profile manual warm, or a captured
+  fixture) — see `harness/findings.md` BUG-7.
+- **Goa is two airports on MMT.** Goa (North) = GOX (Mopa), Goa (South) = GOI (Dabolim).
+  The flights tool currently maps `goa` → `GOI`.
 
 ## Tests
 
 ```bash
-python tests/test_parsers.py   # 63 assertions, no network and no browser needed
+python tests/test_parsers.py   # 78 assertions, no network and no browser needed
 python tools/probe.py          # live gates
 ```
 
