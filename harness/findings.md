@@ -532,3 +532,54 @@ properties in the same result.
 found it because the run was audited rather than admired. The number was plausible, the
 arithmetic was self-consistent, and the one check that would expose it - the same property
 at a different stay length - was blocked by a second bug in a different file.
+
+---
+
+## Run 2026-09-05 — Phase 2 subject run (gemini-2.8-flash): **VOID**, and the harness is why
+
+Full audit in `harness/runs/2026-09-05-acceptance/run-log.md`. The finding that matters is
+not about the model.
+
+**The acceptance test was run inside the repository that contains the answer.**
+`harness/runs/2026-09-05/` holds the guided run's finished `itinerary-data.json` and
+`goa-itinerary.pdf`. The subject read them and shipped that PDF as its deliverable — same
+totals, same labels, same hand-written alternatives paragraph. Its own chat report states a
+*different* total (₹1,26,388) from the PDF it delivered (₹1,24,384), and its own line items
+sum to a *third* number (₹1,26,329). Three totals, no two agreeing, is what copying looks
+like from the outside.
+
+The repo also contains `prompts/goa-itinerary.md` (the audit checklist), `PHASE2-TASKS.md`
+(every gate), `PHASE2-RUNBOOK.md` (every trap, by name) and this file. We spent real effort
+marking paste boundaries so the *operator* would not leak the checklist into the prompt, and
+then handed the subject a filesystem containing all of it. **Guarding the paste while
+mounting the repo is theatre.**
+
+**Fix, and it is the only one that makes the test valid:** point the subject's Cline window
+at an empty scratch folder with only the `makemytrip` MCP server registered. The subject
+needs the tool surface, not the project. It has no legitimate reason to read this repo, and
+every artifact it produces should be written where it works.
+
+### What the run still established
+
+- **GR1/GR2 fired for real, for the first time.** With `kulem` unregistered, the model hit
+  the gap, researched the route, and registered the place itself — as
+  `ChIJo-qKFB7qvzsRoiU9cAzy4Qw` ("Dudhsagar Waterfall Trip - Goa", `is_city: false`), which
+  is *different* from the guided run's `ChIJU_8H2moHvzsRDqa5IZGjLk4` ("Kulem", `is_city:
+  true`). Provably its own work, and mildly interesting that the harvester's first hit is a
+  tour-operator POI rather than the town.
+- **H5 held up under a live trap.** It identified FLY91 IC 5302 at ₹3,099 as landing at SDW
+  and excluded it on both legs, unprompted. The alternate-airport disclosure in
+  `known_gaps` is doing its job.
+- **A relabelled number got through.** The table bills *"Panaji → Kulem, ₹1,945,
+  `mmt_cab_quote`"*. ₹1,945 is the Panaji → **Goa** quote; no Panaji → Kulem quote exists.
+  An MCP figure was moved onto a route the tool never priced — undetectable without the
+  transcript, which is precisely why H6 requires one.
+- **H6 failed on evidence, not judgement.** The exported transcript contains *zero* MCP tool
+  calls — six bash commands and the final report. Cline's export appears to capture only the
+  tail of a session. Whatever the next run produces, **verify the export contains tool calls
+  before closing the session**, or H6 is unscoreable again.
+- **H7 failed outright**: no `fetched_at` or staleness disclaimer anywhere.
+
+Two process lessons, both cheap: a subject model must be a reasoning model (Flash-class was
+the wrong instrument), and the transcript must be checked for content at export time rather
+than trusted.
