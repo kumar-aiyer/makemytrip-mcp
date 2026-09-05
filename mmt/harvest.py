@@ -39,7 +39,8 @@ async def _dismiss_popups(page) -> None:
                 await page.wait_for_timeout(600)
 
 
-async def harvest_place(query: str, *, timeout_ms: int = 25_000) -> dict[str, Any]:
+async def harvest_place(query: str, *,
+                        timeout_ms: int = 25_000) -> tuple[dict[str, Any], str]:
     """Drive the cab search form to capture a full place object for `query`."""
     captured: list[dict] = []
 
@@ -79,14 +80,17 @@ async def harvest_place(query: str, *, timeout_ms: int = 25_000) -> dict[str, An
 
         url_now = page.url
 
-    place = _place_from_captured(captured, query) or _place_from_url(url_now)
+    place, match_tier = _place_from_captured(captured, query)
+    if place is None:
+        place = _place_from_url(url_now)
+        match_tier = "from_url" if place else "none"
     if not place:
         raise BadInput(
             f"Could not capture a place object for {query!r}.",
             hint="Search that route once on makemytrip.com/cabs and paste the listing "
                  "URL into mmt_cab_add_place instead - the manual path always works.",
             details={"page_url": url_now})
-    return place
+    return place, match_tier
 
 
 async def _click_best_suggestion(page, query: str) -> None:
@@ -114,36 +118,63 @@ async def _click_best_suggestion(page, query: str) -> None:
             await items.nth(best_idx).click(timeout=4000)
 
 
-def _place_from_captured(bodies: list[dict], query: str) -> dict[str, Any] | None:
-    """Pick the best place object, preferring regional relevance over prefix luck.
+def _query_variants(query: str) -> list[str]:
+    """The query, then progressively shorter leading phrases.
 
-    Priority: exact name == query, then first-segment == query, then places whose
-    secondary_text contains the query (they are IN the region - e.g. "Panaji"
-    with secondary "Goa, India" for query "goa"), then first-segment startswith,
-    then substring, then the first place seen. This stops "goa" matching
-    "Goalpara, Assam" (prefix luck) when a place actually in Goa exists.
+    BUG-17: a caller naturally writes "Palolem Goa", appending the region. That defeats
+    the exact/segment tiers - the locality row is just "Palolem" - and the phrase then
+    matches by substring against "Bibhitaki Hostel Palolem Goa", so a hostel wins.
+    Trying "Palolem" as well lets the locality win on a strong tier first.
+    """
+    words = query.strip().lower().split()
+    return [" ".join(words[:i]) for i in range(len(words), 0, -1)] or [""]
+
+
+def _place_from_captured(bodies: list[dict], query: str) -> tuple[dict[str, Any] | None, str]:
+    """Pick the best place object and say how strongly it matched.
+
+    Priority: exact name == query, then first-segment == query - both tried against the
+    full query and then against shorter leading phrases - then places whose
+    secondary_text contains the query (they are IN the region, e.g. "Panaji" with
+    secondary "Goa, India" for query "goa"), then first-segment startswith, then
+    substring, then the first place seen. This stops "goa" matching "Goalpara, Assam"
+    (prefix luck) when a place actually in Goa exists.
+
+    Returns (place, tier). The tier is what `cabs.match_quality` grades: everything
+    below `segment` is a guess and the caller is told so.
     """
     q = query.strip().lower()
-    exact = seg = regional = prefix = substr = best = None
-    for body in bodies:
-        for node in _walk(body):
-            if not isinstance(node, dict) or not node.get("place_id"):
-                continue
-            name = str(node.get("city") or node.get("main_text") or "").lower()
-            first = name.split(",")[0].strip()
-            secondary = str(node.get("secondary_text") or "").lower()
-            if name == q:
-                exact = exact or node
-            elif first == q:
-                seg = seg or node
-            elif q in secondary:
-                regional = regional or node
-            elif first.startswith(q):
-                prefix = prefix or node
-            elif q in name:
-                substr = substr or node
-            best = best or node
-    return exact or seg or regional or prefix or substr or best
+    nodes = [n for body in bodies for n in _walk(body)
+             if isinstance(n, dict) and n.get("place_id")]
+
+    def parts(node):
+        name = str(node.get("city") or node.get("main_text") or "").lower()
+        return name, name.split(",")[0].strip(), str(node.get("secondary_text") or "").lower()
+
+    # Strong tiers, tried against the full query first and then shorter phrases.
+    for variant in _query_variants(q):
+        for node in nodes:
+            if parts(node)[0] == variant:
+                return node, "exact" if variant == q else "exact_shortened"
+        for node in nodes:
+            if parts(node)[1] == variant:
+                return node, "segment" if variant == q else "segment_shortened"
+
+    # Weak tiers, full query only - these are the ones worth warning about.
+    regional = prefix = substr = None
+    for node in nodes:
+        name, first, secondary = parts(node)
+        if q in secondary:
+            regional = regional or node
+        elif first.startswith(q):
+            prefix = prefix or node
+        elif q in name:
+            substr = substr or node
+    hit = regional or prefix or substr
+    if hit is not None:
+        return hit, ("regional" if hit is regional
+                     else "prefix" if hit is prefix else "substring")
+    return (nodes[0], "fallback") if nodes else (None, "none")
 
 
 def _place_from_url(url: str) -> dict[str, Any] | None:

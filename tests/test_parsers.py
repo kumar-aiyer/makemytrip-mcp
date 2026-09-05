@@ -5,6 +5,7 @@ drift daily and a test that pins them is a test that fails for the wrong reason.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import pathlib
 import sys
@@ -565,6 +566,103 @@ def test_call_log() -> None:
           recorded and recorded[0][0] == "mmt_version")
 
 
+def test_past_date_guard() -> None:
+    """BUG-18: a past date used to be answered by driving a live page for 99 seconds and
+    returning empty_valid, which reads as 'sold out' rather than 'wrong year'."""
+    import asyncio
+
+    from mmt import dates as D
+    from mmt import tools as T
+
+    today = datetime.date(2026, 9, 5)
+    for bad in ("2025-12-15", "2026-09-03"):
+        try:
+            D.not_past(bad, "date", today=today)
+            check(f"dates: rejects {bad}", False)
+        except BadInput as e:
+            check(f"dates: rejects {bad}", True)
+            check(f"dates: {bad} hint names the year trap", "year" in (e.hint or ""))
+    # today and yesterday stay legal - the server and MakeMyTrip are timezones apart
+    for ok in ("2026-09-05", "2026-09-04", "2026-12-15"):
+        D.not_past(ok, "date", today=today)
+    check("dates: today, yesterday and future all accepted", True)
+    try:
+        D.parse_iso("15-12-2026")
+        check("dates: rejects non-ISO", False)
+    except BadInput:
+        check("dates: rejects non-ISO", True)
+
+    # and every priced tool refuses before touching the network
+    for name, args in (
+            ("mmt_flight_search", {"origin": "BLR", "dest": "GOI", "date": "2025-12-15"}),
+            ("mmt_hotel_search", {"city": "Goa", "check_in": "2025-12-15",
+                                  "check_out": "2025-12-21"}),
+            ("mmt_hotel_rates", {"hotel_id": "1", "city": "Goa",
+                                 "check_in": "2025-12-15", "check_out": "2025-12-21"}),
+            ("mmt_cab_quote", {"origin": "goa", "dest": "panaji",
+                               "date": "2025-12-15"}),
+            ("mmt_price_itinerary", {"stays": [{"hotel_id": "1", "city": "Goa",
+                                                "check_in": "2025-12-15",
+                                                "check_out": "2025-12-16"}]}),
+    ):
+        r = asyncio.run(T.TOOLS[name]["fn"](**args))
+        check(f"past date: {name} says bad_input",
+              r.get("kind") == "bad_input", str(r.get("kind")))
+
+
+def test_place_match_quality() -> None:
+    """BUG-17, from two acceptance runs: "Calangute Goa" registered as "Goa beach" and
+    "Palolem Goa" as "Bibhitaki Hostel Palolem Goa" - the same hostel twice - with
+    nothing in the result saying the match was a guess."""
+    from mmt import harvest as HV
+
+    check("place: query variants shorten from the right",
+          HV._query_variants("Palolem Goa") == ["palolem goa", "palolem"])
+    check("place: a single-word query is unchanged",
+          HV._query_variants("goa") == ["goa"])
+
+    def body(*places):
+        return [{"data": list(places)}]
+
+    locality = {"place_id": "L", "main_text": "Palolem",
+                "secondary_text": "Goa, India", "is_city": True}
+    hostel = {"place_id": "H", "main_text": "Bibhitaki Hostel Palolem Goa",
+              "secondary_text": "Palolem, Goa, India", "is_city": False}
+
+    # the hostel is listed first, exactly as it was live
+    place, tier = HV._place_from_captured(body(hostel, locality), "Palolem Goa")
+    check("place: locality beats a hostel that merely contains the words",
+          place["place_id"] == "L", f"{place['place_id']} via {tier}")
+    check("place: and says it matched on a shortened query",
+          tier.endswith("_shortened"), tier)
+
+    # the regional rule that made "goa" work must survive
+    panaji = {"place_id": "P", "main_text": "Panaji", "secondary_text": "Goa, India",
+              "is_city": True}
+    goalpara = {"place_id": "G", "main_text": "Goalpara",
+                "secondary_text": "Assam, India", "is_city": True}
+    place, tier = HV._place_from_captured(body(goalpara, panaji), "goa")
+    check("place: 'goa' still prefers a place IN Goa over prefix luck",
+          place["place_id"] == "P", f"{place['place_id']} via {tier}")
+
+    # grading
+    m = CB.match_quality(locality, "Palolem Goa", "segment_shortened")
+    check("match: a city on a strong tier is high confidence",
+          m["confidence"] == "high" and "warning" not in m, str(m))
+    m = CB.match_quality(hostel, "Palolem Goa", "substring")
+    check("match: a hostel for a locality query is low confidence",
+          m["confidence"] == "low", str(m))
+    check("match: and warns, naming what it actually got",
+          "Bibhitaki" in m.get("warning", ""))
+    airport = {"place_id": "A", "main_text": "Dabolim Airport", "is_city": False}
+    m = CB.match_quality(airport, "Dabolim Airport Goa", "segment_shortened")
+    check("match: asking for a venue and getting one is not a warning",
+          m["confidence"] == "high" and "warning" not in m, str(m))
+    beach = {"place_id": "B", "main_text": "Goa beach", "is_city": False}
+    m = CB.match_quality(beach, "Calangute Goa", "substring")
+    check("match: 'Calangute Goa' -> 'Goa beach' warns", "warning" in m)
+
+
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
@@ -574,7 +672,7 @@ def main() -> int:
                test_recover_gating, test_null_prices_through_fetch,
                test_cab_summary_hours, test_cab_trip_validation,
                test_cache_byte_budget, test_oversize_body_through_fetch,
-               test_call_log):
+               test_call_log, test_past_date_guard, test_place_match_quality):
         try:
             fn()
         except Exception as e:

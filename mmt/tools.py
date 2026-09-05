@@ -14,6 +14,7 @@ from typing import Any, Callable
 from . import cabs as CB
 from . import calllog as CALLLOG
 from . import config as C
+from . import dates as D
 from . import flights as FL
 from . import harvest as HV
 from . import hotels as HO
@@ -94,6 +95,7 @@ async def mmt_hotel_search(city: str, check_in: str, check_out: str, adults: int
     A wrong city code returns an empty result rather than an error, so the response
     carries a warning when that is what happened.
     """
+    D.not_past(check_in, "check_in")
     code = HO.resolve_city(city)
     n = HO.nights(check_in, check_out)
     valid_ages = child_ages or []
@@ -163,6 +165,7 @@ async def mmt_hotel_rates(hotel_id: str, city: str, check_in: str, check_out: st
     Includes meal plan, cancellation policy and inclusions. Flags properties where every
     plan includes breakfast, so a room-only rate that does not exist is never reported.
     """
+    D.not_past(check_in, "check_in")
     code = HO.resolve_city(city)
     n = HO.nights(check_in, check_out)
     data = await HO.room_rates(hotel_id, code, check_in, check_out, adults=adults,
@@ -190,6 +193,8 @@ async def mmt_price_itinerary(stays: list[dict], fresh: bool = False) -> dict:
     """
     if not isinstance(stays, list) or not stays:
         raise BadInput("stays must be a non-empty array")
+    for i, st in enumerate(stays):
+        D.not_past(st.get("check_in"), f"stays[{i}].check_in")
 
     async def price(s: dict) -> dict:
         code = HO.resolve_city(s["city"])
@@ -264,6 +269,8 @@ async def mmt_flight_search(origin: str, dest: str, date: str, adults: int = 2,
     Goa is two airports: GOI (South, Dabolim) and GOX (North, Mopa). Bare "goa"
     means GOI.
     """
+    # `date` shadows datetime.date in this signature, so validate through the module.
+    D.not_past(date, "date")
     o, d = FL.resolve_airport(origin), FL.resolve_airport(dest)
     return await FL.search(o, d, date, adults=adults, children=children,
                            infants=infants, cabin=cabin, fresh=fresh)
@@ -375,12 +382,24 @@ async def mmt_cab_find_place(query: str, save_as: str = "",
     Drives MakeMyTrip's own search form, because it publishes no location autosuggest
     API. Slow (up to about 30 seconds) and occasionally flaky; if it fails, use
     mmt_cab_add_place with a pasted URL instead.
+
+    **Check `match` before pricing against the result.** The suggest list is whatever
+    MakeMyTrip's autocomplete returns, so a locality name can land on a hotel or a beach
+    that merely contains the word. `match.confidence` is high/medium/low and a `warning`
+    is raised to the top level when the resolved place is not a city and you did not ask
+    for a venue. Fares are then quoted to that exact point, not to the locality.
     """
-    place = await HV.harvest_place(query)
+    place, tier = await HV.harvest_place(query)
+    match = CB.match_quality(place, query, tier)
     nm = (save_as or place.get("city") or query).strip().lower()
     CB.save_place(nm, place)
-    return {"registered_as": nm, "place": place,
-            "known_places": sorted(CB.known_places())}
+    out = {"registered_as": nm, "place": place, "match": match,
+           "known_places": sorted(CB.known_places())}
+    # Surfaced at the top level too: a nested field is easy to skim past, and the whole
+    # point is that a weak match should not be mistaken for a clean one.
+    if match.get("warning"):
+        out["warning"] = match["warning"]
+    return out
 
 
 # ---------------------------------------------------------------- meta and health
@@ -422,6 +441,11 @@ async def mmt_capabilities() -> dict:
             "cab_find_place": "drives the search form; falls back to a pasted URL",
         },
         "refuses": {
+            "past dates": "flights, hotels, cabs and itineraries reject a date before "
+                          "yesterday as bad_input, instantly. MakeMyTrip renders a past "
+                          "date as an empty page, which reads as 'sold out' rather than "
+                          "'wrong year' - and costs ~99 s to find out. If you resolved a "
+                          "bare month and day, check the year against today's date first",
             "cab_quote same-day RT": "trip_type RT with return_date == date is "
                                      "rejected: MakeMyTrip answers it with the "
                                      "ONE-WAY listing, so quoting it as a round trip "
@@ -457,6 +481,12 @@ async def mmt_capabilities() -> dict:
             "do not leave local transport off an itinerary silently.",
             "Hotel figures are per night. A stay line is nightly x nights and is an "
             "estimate: a range spanning a price change will not match it exactly.",
+            "mmt_cab_find_place resolves against MakeMyTrip's own autocomplete, which "
+            "lists venues alongside localities - a locality name can land on a hotel or "
+            "a beach that merely contains the word. Read the `match` block it returns: "
+            "`confidence` high/medium/low, and a top-level `warning` when the result is "
+            "not a city and you did not ask for a venue. Fares are quoted to that exact "
+            "point, not to the locality.",
             "Holiday packages are quoted per enquiry and are not searchable.",
             "A flight search takes ~30-60 s: the API cannot be called directly, so the "
             "server drives the site's own search page. Ask for one route and date at "

@@ -778,3 +778,66 @@ has passed them all. Outstanding, in order of cheapness:
 - **H1** — subject behaviour; re-run and see whether it recurs.
 - **H2** — never exercised in four runs. Four subjects have all chosen to fly. The trigger
   should either be retired or the prompt should invite a transport comparison.
+
+---
+
+## Run 2026-09-05 — BUG-17 and BUG-18 fixed
+
+Offline **174/174** (20 new assertions), 19/19 version, 33/33 watch_server. Both fixes are
+disclosed in `mmt_capabilities`, because a guard a model cannot see it will hit is only half
+a fix.
+
+### BUG-18 — a past date is `bad_input`, not a 99-second empty page
+
+`mmt/dates.py` is a pure module: `parse_iso` and `not_past`. Wired into
+`mmt_flight_search`, `mmt_hotel_search`, `mmt_hotel_rates`, `mmt_price_itinerary` (every
+leg, up front, so one bad date cannot half-run a batch) and `cabs.validate_trip`.
+
+Two deliberate choices:
+
+- **The floor is yesterday, not today.** The server runs wherever it runs and MakeMyTrip
+  sells in IST; a strict "before today" test would refuse a legitimate same-day search for a
+  caller a timezone west. A day of slack costs nothing against the nine-month errors this
+  exists to catch.
+- **The hint names the actual trap**: *"If you resolved a bare month and day, the year is
+  probably wrong - today is <date>."* The subject that hit this had resolved "December 15th"
+  to 2025. Telling it the date is invalid is less useful than telling it why.
+
+Measured effect: `2025-12-15` went from **99,552 ms and `empty_valid`** to an instant
+`bad_input`, on all four tools.
+
+### BUG-17 — the harvester says how well it matched, and ranks better
+
+Two changes in one, because the confidence signal alone would have graded a bad answer
+honestly rather than producing a good one.
+
+**Ranking.** `harvest._place_from_captured` now tries the strong tiers (exact name, exact
+first segment) against the full query *and* against progressively shorter leading phrases.
+This is the actual mechanism of the bug: a caller writes "Palolem Goa", appending the
+region; the locality row is just "Palolem" so exact and segment both miss; and the phrase
+then matches by *substring* against "Bibhitaki Hostel Palolem Goa". Trying "Palolem" too
+lets the locality win on a strong tier. The regional rule that makes bare "goa" resolve to
+Panaji rather than Goalpara is untouched and tested.
+
+**Confidence.** `cabs.match_quality(place, query, tier)` is pure and grades the result:
+`high` for the exact/segment tiers, `medium` for regional/prefix, `low` for
+substring/fallback. It also catches the case confidence alone misses — **a locality query
+answered by a named venue** — since a hostel can match its own name exactly. When the
+resolved place is not a city and the query contains no venue word (airport, hotel, resort,
+station, fort, beach…), it downgrades to `low` and raises a warning naming what was actually
+registered. `mmt_cab_find_place` returns the block as `match` and lifts the warning to the
+top level, because a nested field is easy to skim past.
+
+Asking for "Dabolim Airport Goa" and getting Dabolim Airport stays `high` with no warning —
+a venue query answered by a venue is correct, and a fix that cried wolf on it would be
+ignored within a run.
+
+### What is left in Phase 2
+
+- **H1** — subject behaviour, not a tool gap: the last subject collapsed base/tax to all-in
+  although every call returned the split and `pricing_conventions.split` says so. Worth
+  watching on the next run, not worth patching.
+- **H2** — never exercised in four runs; four subjects have all chosen to fly. The train
+  window should be retired as a designed trigger, or the prompt should invite a transport
+  comparison. The cab-place gap has fired 4/4 and carries gap-recovery on its own.
+- No re-run performed for these two fixes, by instruction.

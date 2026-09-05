@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 from . import config as C
+from . import dates as D
 from . import rsc
 from .errors import BadInput, EmptyValid, UnregisteredPlace
 from .fetch import get_text
@@ -49,6 +50,57 @@ DIST_RE = re.compile(r"\*?(\d[\d,]*)\s*Kms?\*?", re.I)
 TIME_RE = re.compile(r"\*?(\d+(?:\.\d+)?)\s*hr", re.I)
 
 
+# Tiers `harvest._place_from_captured` can match on, strongest first. Anything below
+# `segment_shortened` means the harvester never found a row whose *name* is the place
+# asked for - it settled for one that merely mentions it.
+STRONG_TIERS = ("exact", "exact_shortened", "segment", "segment_shortened")
+
+# Words that make a query a request for a specific venue rather than a locality. Asking
+# for "Dabolim Airport" and getting a POI is the correct answer, not a weak match.
+POI_WORDS = ("airport", "hotel", "hostel", "resort", "station", "park", "beach",
+             "falls", "trek", "plantation", "temple", "church", "fort", "market")
+
+
+def match_quality(place: dict[str, Any], query: str, tier: str) -> dict[str, Any]:
+    """Grade how well a harvested place answers the query. Pure.
+
+    BUG-17: the harvester returned the best row it could find and said nothing about how
+    good that was, so "Calangute Goa" registering as "Goa beach" and "Palolem Goa" as
+    "Bibhitaki Hostel Palolem Goa" looked identical to a clean hit. Two acceptance runs
+    priced real transfers between POIs registered under locality names.
+    """
+    q = (query or "").strip().lower()
+    main = str(place.get("main_text") or place.get("city") or "").strip()
+    is_city = bool(place.get("is_city"))
+    asked_for_venue = any(w in q for w in POI_WORDS)
+
+    if tier in STRONG_TIERS:
+        confidence = "high"
+    elif tier in ("regional", "prefix"):
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    out: dict[str, Any] = {
+        "tier": tier, "confidence": confidence, "query": query,
+        "resolved_to": main, "is_city": is_city,
+    }
+    # A locality query answered by a named venue is the failure worth naming, and it is
+    # not caught by confidence alone: a venue can match its own name exactly.
+    if not is_city and not asked_for_venue:
+        out["confidence"] = "low" if confidence == "high" else confidence
+        out["warning"] = (
+            f"{query!r} resolved to {main!r}, which MakeMyTrip does not classify as a "
+            f"city (is_city false). Cab fares will be quoted to that exact point, not to "
+            f"the locality. Check it is where you meant, or register the place from a "
+            f"listing URL with mmt_cab_add_place.")
+    elif confidence != "high":
+        out["warning"] = (
+            f"{query!r} matched {main!r} only on a weak tier ({tier}); the harvester "
+            f"found no row actually named that. Verify before pricing against it.")
+    return out
+
+
 def validate_trip(iso_date: str, trip_type: str, return_date: str) -> None:
     """Reject trip shapes MakeMyTrip cannot actually price. Pure; raises BadInput.
 
@@ -60,10 +112,7 @@ def validate_trip(iso_date: str, trip_type: str, return_date: str) -> None:
     cheapest fare 12,161 -> 20,264. Passing that back as a round-trip quote is a wrong
     number wearing a right label, so it is refused here instead.
     """
-    try:
-        dep = date.fromisoformat(iso_date)
-    except ValueError:
-        raise BadInput("date must be ISO YYYY-MM-DD") from None
+    dep = D.not_past(iso_date, "date")
     if trip_type not in ("OW", "RT"):
         raise BadInput(f"trip_type must be OW or RT, not {trip_type!r}.")
     if trip_type != "RT":
