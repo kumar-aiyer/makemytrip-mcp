@@ -485,3 +485,50 @@ This is the most valuable thing the acceptance run produced. It was invisible fo
 because the number looked plausible and nothing cross-checked it against a different stay
 length - the same shape as BUG-12, which is now three for three on "an unvalidated number is
 worse than a failing one".
+
+---
+
+## Run 2026-09-05 (later still) - BUG-16 fixed: the unit is now in the name
+
+Offline 140/140. The rename is deliberately breaking. Keeping `all_in_inr` and changing
+what it means would have left every existing reader silently wrong, which is the failure
+this bug already caused once.
+
+| Before | After | Why |
+|---|---|---|
+| `base_inr` / `tax_inr` / `all_in_inr` | `nightly_base_inr` / `nightly_tax_inr` / `nightly_all_in_inr` | on both `mmt_hotel_search` rows and `mmt_hotel_rates` plans. The unit is the thing that was wrong, so the unit is in the name |
+| `all_in_per_night_inr` (= all_in / nights) | `stay_estimate_all_in_inr` (= nightly x nights) | the old field divided a nightly rate by nights - wrong by `nights` squared against a real stay total |
+| `cheapest_per_night_inr` | `cheapest_stay_estimate_inr` | same inversion on `mmt_hotel_rates` |
+| `total_base_inr` / `total_tax_inr` / `total_all_in_inr` | `total_base_estimate_inr` / `total_tax_estimate_inr` / `total_all_in_estimate_inr` | `mmt_price_itinerary` summed nightly rates across legs, so a two-night stay counted the same as a fortnight. Each leg now multiplies by its own nights before the sum, and gains `stay_base_inr` / `stay_tax_inr` / `stay_all_in_inr` |
+
+`extra_fees_inr` keeps its name: MakeMyTrip calls it a total, it is not part of
+`priceWithTax`, and its unit is genuinely not established. Better un-prefixed than
+mislabelled a second time.
+
+Everything downstream moved with it: `tools/probe.py` G1/G2/G3 now print `x/night` and G2
+additionally asserts `stay == nightly x nights`, and the offline suite gained a check that
+no un-suffixed price key survives on a summarised row - so a future edit that reintroduces
+`all_in_inr` fails a test rather than a trip.
+
+**Everything is an estimate on purpose.** MakeMyTrip quotes one representative nightly rate
+per range, not a per-date breakdown, so `nightly x nights` is the honest ceiling of what
+this server can know. The word "estimate" is in the field names, the note and the PDF.
+
+### The itinerary was rebuilt on the corrected figures
+
+| | Before | After |
+|---|---|---|
+| Hotel line | 13,342 (read as a 6-night total) | **80,052** (13,342/night x 6) |
+| Grand total | 57,674 | **1,24,384** |
+| Per person | 28,837 | **62,192** |
+
+The hotel went from 23% of the trip to 64% of it, which changes the advice as much as the
+number: the PDF now carries same-search alternatives, and the cheapest credible swap
+(ALOHA Holiday Resort 3*, 4,592/night) brings the trip back to 71,884. Also flagged and not
+used: Resort Primo Bom Terra Verde quotes 25,091/night for a 3*, dearer than both 5*
+properties in the same result.
+
+**Verdict on the acceptance run:** it found a bug that had survived two phases, and it only
+found it because the run was audited rather than admired. The number was plausible, the
+arithmetic was self-consistent, and the one check that would expose it - the same property
+at a different stay length - was blocked by a second bug in a different file.

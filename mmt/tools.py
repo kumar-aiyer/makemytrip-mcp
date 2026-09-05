@@ -72,10 +72,14 @@ async def mmt_hotel_search(city: str, check_in: str, check_out: str, adults: int
                            limit: int = 20, fresh: bool = False) -> dict:
     """Search hotels in an Indian city for a date range and return prices.
 
-    Prices are INR STAY TOTALS for the whole range, not per night, and are reported as
-    base, tax and all-in separately - MakeMyTrip displays them apart and the all-in
-    figure is roughly 18% above the headline. An all_in_per_night_inr is added for
-    comparability.
+    Prices are INR **PER NIGHT** - `nightly_base_inr`, `nightly_tax_inr`,
+    `nightly_all_in_inr` - reported apart because MakeMyTrip displays them apart and
+    the all-in figure is roughly 18% above the headline.
+
+    `stay_estimate_all_in_inr` is `nightly_all_in_inr x nights`. It is an ESTIMATE:
+    MakeMyTrip quotes one representative nightly rate for the range rather than a
+    per-date breakdown, so a stay spanning a price change will not match it exactly.
+    Book-time totals come from the property, not from here.
 
     A wrong city code returns an empty result rather than an error, so the response
     carries a warning when that is what happened.
@@ -99,13 +103,14 @@ async def mmt_hotel_search(city: str, check_in: str, check_out: str, adults: int
                  "mmt/config.py. Both must be sent complete.")
     hotels = [HO.summarise(h) for h in hotels_raw]
     for h in hotels:
-        if isinstance(h.get("all_in_inr"), (int, float)):
-            h["all_in_per_night_inr"] = round(h["all_in_inr"] / n)
+        if isinstance(h.get("nightly_all_in_inr"), (int, float)):
+            h["stay_estimate_all_in_inr"] = round(h["nightly_all_in_inr"] * n)
     return {"city": city, "city_code": code, "check_in": check_in,
             "check_out": check_out, "nights": n, "rooms": rooms, "adults": adults,
             "total_in_city": response.get("hotelCountInCity"),
             "returned": len(hotels), "hotels": hotels,
-            "note": "Signed-out retail rates. This server cannot book.",
+            "note": "Signed-out retail rates, PER NIGHT. This server cannot book. "
+                    "stay_estimate_all_in_inr is nightly x nights, an estimate.",
             **meta.meta()}
 
 
@@ -141,6 +146,10 @@ async def mmt_hotel_rates(hotel_id: str, city: str, check_in: str, check_out: st
                           adults: int = 2, rooms: int = 1, fresh: bool = False) -> dict:
     """Every room type and rate plan for one property, with base/tax/all-in per plan.
 
+    Plan prices are PER NIGHT (`nightly_*`). `cheapest_stay_estimate_inr` multiplies the
+    cheapest plan by `nights` and is an estimate, for the reason given on
+    mmt_hotel_search.
+
     Includes meal plan, cancellation policy and inclusions. Flags properties where every
     plan includes breakfast, so a room-only rate that does not exist is never reported.
     """
@@ -150,8 +159,8 @@ async def mmt_hotel_rates(hotel_id: str, city: str, check_in: str, check_out: st
                                rooms=rooms, fresh=fresh)
     data["nights"] = n
     cheap = data.get("cheapest") or {}
-    if isinstance(cheap.get("all_in_inr"), (int, float)):
-        data["cheapest_per_night_inr"] = round(cheap["all_in_inr"] / n)
+    if isinstance(cheap.get("nightly_all_in_inr"), (int, float)):
+        data["cheapest_stay_estimate_inr"] = round(cheap["nightly_all_in_inr"] * n)
     if data.get("breakfast_only_rates"):
         data["warning"] = ("every rate plan here includes breakfast - there is no "
                            "room-only option to report")
@@ -187,6 +196,13 @@ async def mmt_price_itinerary(stays: list[dict], fresh: bool = False) -> dict:
         row.update({"label": s.get("label"), "city": s["city"],
                     "check_in": s["check_in"], "check_out": s["check_out"],
                     "nights": n})
+        # Rates are per night (BUG-16). Summing them across legs of different lengths
+        # was the old bug in miniature - a two-night stay counted the same as a fortnight.
+        for unit, stay in (("nightly_base_inr", "stay_base_inr"),
+                           ("nightly_tax_inr", "stay_tax_inr"),
+                           ("nightly_all_in_inr", "stay_all_in_inr")):
+            if isinstance(row.get(unit), (int, float)):
+                row[stay] = round(row[unit] * n)
         return row
 
     results = await gather_limited([price(s) for s in stays], limit=4)
@@ -198,13 +214,19 @@ async def mmt_price_itinerary(stays: list[dict], fresh: bool = False) -> dict:
         else:
             legs.append(r)
 
-    tb = sum(l["base_inr"] for l in legs if isinstance(l.get("base_inr"), (int, float)))
-    tt = sum(l["tax_inr"] for l in legs if isinstance(l.get("tax_inr"), (int, float)))
+    tb = sum(l["stay_base_inr"] for l in legs
+             if isinstance(l.get("stay_base_inr"), (int, float)))
+    tt = sum(l["stay_tax_inr"] for l in legs
+             if isinstance(l.get("stay_tax_inr"), (int, float)))
     return {"legs": legs, "leg_count": len(legs),
             "total_nights": sum(l.get("nights") or 0 for l in legs),
-            "total_base_inr": tb, "total_tax_inr": tt, "total_all_in_inr": tb + tt,
+            "total_base_estimate_inr": tb, "total_tax_estimate_inr": tt,
+            "total_all_in_estimate_inr": tb + tt,
             "errors": errors,
-            "note": "Retail OTA rates. An operator buys below these, so treat them as a "
+            "note": "Retail OTA rates. Totals are ESTIMATES - each leg is a nightly rate "
+                    "multiplied by its nights, because MakeMyTrip quotes one "
+                    "representative nightly rate per range rather than a per-date "
+                    "breakdown. An operator buys below these, so treat them as a "
                     "private benchmark rather than an opening number."}
 
 

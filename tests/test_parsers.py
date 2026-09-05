@@ -44,13 +44,16 @@ def test_rate_plans() -> None:
     cheapest = out["cheapest"]
     check("hotel: plans parsed", out["rate_plan_count"] == 2, str(out["rate_plan_count"]))
     check("hotel: base and tax kept apart",
-          cheapest["base_inr"] is not None and cheapest["tax_inr"] is not None)
+          cheapest["nightly_base_inr"] is not None
+          and cheapest["nightly_tax_inr"] is not None)
     check("hotel: all_in == base + tax",
-          cheapest["all_in_inr"] == cheapest["base_inr"] + cheapest["tax_inr"])
+          cheapest["nightly_all_in_inr"]
+          == cheapest["nightly_base_inr"] + cheapest["nightly_tax_inr"])
     check("hotel: TOTAL_AMOUNT ignored (it is base only)",
-          cheapest["all_in_inr"] > cheapest["base_inr"])
+          cheapest["nightly_all_in_inr"] > cheapest["nightly_base_inr"])
     check("hotel: cheapest sorts first",
-          out["rate_plans"][0]["all_in_inr"] <= out["rate_plans"][1]["all_in_inr"])
+          out["rate_plans"][0]["nightly_all_in_inr"]
+          <= out["rate_plans"][1]["nightly_all_in_inr"])
     check("hotel: breakfast-only flag false when a room-only plan exists",
           out["breakfast_only_rates"] is False)
     check("hotel: meal plan preserved", cheapest["meal_plan"] == "NO_MEAL")
@@ -63,7 +66,11 @@ def test_hotel_api_shape() -> None:
     check("api: hotels found under personalizedSections", len(hotels) == 2)
     check("api: city validated", HO.city_ok(resp) is True)
     s = HO.summarise(hotels[0])
-    check("api: summary arithmetic", s["all_in_inr"] == s["base_inr"] + s["tax_inr"])
+    check("api: summary arithmetic",
+          s["nightly_all_in_inr"] == s["nightly_base_inr"] + s["nightly_tax_inr"])
+    check("api: no un-suffixed price key survives the rename (BUG-16)",
+          not {"all_in_inr", "base_inr", "tax_inr",
+               "all_in_per_night_inr"} & set(s))
     check("api: coupon surfaced", HO.summarise(hotels[1])["coupon"]["code"] == "MMTSAVE")
     check("api: not all prices null", HO.all_prices_null(hotels) is False)
 

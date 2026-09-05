@@ -63,10 +63,11 @@ async def main() -> int:
     line("G1  hotel search, with prices")
     def v_search(r):
         hs = r.get("hotels") or []
-        priced = [h for h in hs if h.get("all_in_inr")]
+        priced = [h for h in hs if h.get("nightly_all_in_inr")]
         for h in hs[:3]:
-            print(f"     {str(h['name'])[:38]:40} base {h['base_inr']} + tax "
-                  f"{h['tax_inr']} = {h['all_in_inr']}")
+            print(f"     {str(h['name'])[:38]:40} base {h['nightly_base_inr']} + tax "
+                  f"{h['nightly_tax_inr']} = {h['nightly_all_in_inr']}/night "
+                  f"(stay est {h.get('stay_estimate_all_in_inr')})")
         return bool(priced), f"{len(priced)}/{len(hs)} priced"
     results["hotel_search"] = await gate(
         "hotel search", T.TOOLS["mmt_hotel_search"]["fn"](
@@ -79,9 +80,12 @@ async def main() -> int:
         if not legs:
             return False, "no legs"
         l = legs[0]
-        good = l["all_in_inr"] == l["base_inr"] + l["tax_inr"]
-        print(f"     {l['name']}: {l['base_inr']} + {l['tax_inr']} = {l['all_in_inr']}")
-        return good, "base + tax == all_in"
+        good = (l["nightly_all_in_inr"] == l["nightly_base_inr"] + l["nightly_tax_inr"]
+                and l["stay_all_in_inr"] == round(l["nightly_all_in_inr"] * l["nights"]))
+        print(f"     {l['name']}: {l['nightly_base_inr']} + {l['nightly_tax_inr']} = "
+              f"{l['nightly_all_in_inr']}/night x {l['nights']}n = "
+              f"{l['stay_all_in_inr']}")
+        return good, "base + tax == all_in, and stay == nightly x nights"
     results["pin"] = await gate(
         "pinned property", T.TOOLS["mmt_price_itinerary"]["fn"](stays=[{
             "hotel_id": "201211061904322411", "city": "Kochi",
@@ -92,7 +96,8 @@ async def main() -> int:
     def v_rates(r):
         for p in (r.get("rate_plans") or [])[:4]:
             print(f"     {str(p['room'])[:26]:28} {str(p['plan'])[:34]:36} "
-                  f"{p['base_inr']} + {p['tax_inr']} = {p['all_in_inr']}")
+                  f"{p['nightly_base_inr']} + {p['nightly_tax_inr']} = "
+                  f"{p['nightly_all_in_inr']}/night")
         return r.get("rate_plan_count", 0) > 0, f"tier={r.get('tier_used')}"
     results["rate_plans"] = await gate(
         "rate plans", T.TOOLS["mmt_hotel_rates"]["fn"](

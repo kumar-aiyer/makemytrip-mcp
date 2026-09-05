@@ -4,7 +4,7 @@
     "start": "2026-12-15",
     "end": "2026-12-21",
     "adults": 2,
-    "note": "Every rupee figure marked mmt_* was returned by a live MakeMyTrip MCP tool call on 2026-09-05 (raw results in step3-out.json). Figures marked web/estimate are not from the MCP server and are labelled as such. Flight fares are per adult; the hotel figure is the stay total for the whole range, counted once; cab fares are per vehicle."
+    "note": "Every rupee figure marked mmt_* was returned by a live MakeMyTrip MCP tool call on 2026-09-05. Figures marked web/estimate are not from the MCP server and are labelled as such. Flight fares are per adult; CAB fares are per vehicle; HOTEL rates are PER NIGHT and the stay line is nightly x 6, an estimate - MakeMyTrip quotes one representative nightly rate for a range, not a per-date breakdown. An earlier version of this page read the nightly rate as a 6-night total and understated the trip by Rs 66,710 (BUG-16)."
   },
   "legs": [
     {
@@ -77,8 +77,8 @@
       "source": "mmt_flight_search"
     },
     {
-      "label": "Hotel: Hyatt Centric Candolim, 6 nights (stay total)",
-      "amount": 13342.0,
+      "label": "Hotel: Hyatt Centric Candolim, 6 nights @ Rs 13,342/night",
+      "amount": 80052.0,
       "source": "mmt_hotel_search"
     },
     {
@@ -115,14 +115,16 @@
   "unpriced": [
     "GOI airport <-> Candolim hotel transfers, both ways. No airport place is registered in .state and no quote was taken, so this is genuinely missing from the total.",
     "18 and 20 Dec local transport - leisure days, nothing quoted.",
-    "Trains BLR<->Goa: mmt_train_search returns not_in_window on both dates. Indian Railways opens the 60-day ARP on 2026-10-16 (outbound) and 2026-10-22 (return), so no rail fare can exist yet. This is correct tool behaviour, not a failure."
+    "Trains BLR<->Goa: mmt_train_search returns not_in_window on both dates. Indian Railways opens the 60-day ARP on 2026-10-16 (outbound) and 2026-10-22 (return), so no rail fare can exist yet. This is correct tool behaviour, not a failure.",
+    "Resort Primo Bom Terra Verde came back at Rs 25,091/night for a 3* - dearer than both 5* properties in the same result. Not investigated; flagged rather than used."
   ],
   "alternatives": [
-    "Driving instead of flying: cab Bengaluru -> Goa 603 km, one-way Rs 12,161 all-in (Savaari WagonR/Swift CNG); round trip Rs 20,264. Both per vehicle, from mmt_cab_quote. The round trip beats two one-ways (Rs 24,322) but loses to the Rs 20,722 of flights."
+    "Cheaper beds, same search, same dates - the hotel is now the largest line by far: Fortune Select Candolim 5* Rs 11,619/night (Rs 69,714 stay), ALOHA Holiday Resort 3* Rs 4,592/night (Rs 27,552), Baga Beach Hotel Rs 2,493/night (Rs 14,958). Swapping the Hyatt for ALOHA takes the trip from Rs 1,24,384 to Rs 71,884.",
+    "Driving instead of flying: cab Bengaluru -> Goa 603 km, one-way Rs 12,161 all-in; round trip Rs 20,264. Both per vehicle, from mmt_cab_quote. The round trip beats two one-ways (Rs 24,322) but loses to the Rs 20,722 of flights."
   ],
   "sources": {
     "mmt_flight_search": "2 calls (the run budget), 25 itineraries each, tier 2, 2026-09-05T10:08 PDT",
-    "mmt_hotel_search": "Goa CTGOI, 2026-12-15 to 2026-12-21, nights=6, rooms=1, adults=2, signed-out retail rates",
+    "mmt_hotel_search": "Goa CTGOI, 2026-12-15 to 2026-12-21, nights=6, rooms=1, adults=2, signed-out retail rates, re-run 2026-09-05 after the BUG-16 fix; nightly_all_in_inr 13342, stay_estimate_all_in_inr 80052",
     "mmt_cab_quote": "4 calls: BLR->Goa OW and RT, Goa->Kulem RT, Panaji->Goa OW",
     "mmt_cab_find_place": "kulem registered as place_id ChIJU_8H2moHvzsRDqa5IZGjLk4",
     "web/estimate": "Dudhsagar fees and meal rates are NOT from the MCP server - see labels above"

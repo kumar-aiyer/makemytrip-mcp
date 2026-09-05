@@ -169,7 +169,14 @@ def body_valid(data: Any) -> bool:
 
 
 def summarise(h: dict) -> dict[str, Any]:
-    """Base, tax and all-in stay separate. These are stay totals, not per night."""
+    """Base, tax and all-in stay separate. These are PER-NIGHT rates.
+
+    They were reported as stay totals until 2026-09-05 (BUG-16). MakeMyTrip's
+    `priceWithTax` barely moves with the length of the range - Baga Beach Hotel
+    answered 2,493 for one night and 2,493 for six - so a stay total it is not. The
+    names carry the unit now, because the previous name was the whole bug: a plausible
+    number under a wrong label, multiplied into every itinerary built on it.
+    """
     p = h.get("priceDetail") or {}
     coupon = p.get("coupon") or {}
     loc = h.get("locationDetail") if isinstance(h.get("locationDetail"), dict) else {}
@@ -178,9 +185,11 @@ def summarise(h: dict) -> dict[str, Any]:
         "name": h.get("name"),
         "star": h.get("starRating"),
         "sold_out": bool(h.get("soldOut")),
-        "base_inr": p.get("price"),
-        "tax_inr": p.get("totalTax"),
-        "all_in_inr": p.get("priceWithTax"),
+        "nightly_base_inr": p.get("price"),
+        "nightly_tax_inr": p.get("totalTax"),
+        "nightly_all_in_inr": p.get("priceWithTax"),
+        # Unit not established for this one: MakeMyTrip calls it a total and it is not
+        # part of priceWithTax. Left un-prefixed rather than mislabelled a second time.
         "extra_fees_inr": p.get("totalAdditionalFees"),
         "rate_plan_code": p.get("ratePlanCode"),
         "coupon": ({"code": coupon.get("code"), "amount": coupon.get("couponAmount"),
@@ -247,14 +256,15 @@ def parse_rate_plans(initial_state: dict) -> dict[str, Any]:
                 "cancellation": _cancel_text(rp.get("cancellationPolicy")),
                 "inclusions": [i.get("text") if isinstance(i, dict) else i
                                for i in (rp.get("inclusionsList") or [])][:6],
-                "base_inr": base,
-                "tax_inr": tax,
-                "all_in_inr": all_in,
+                "nightly_base_inr": base,
+                "nightly_tax_inr": tax,
+                "nightly_all_in_inr": all_in,
                 "avail_count": pd.get("availCount"),
                 "rate_plan_code": rp.get("rpc") or pd.get("ratePlanCode"),
             })
 
-    plans.sort(key=lambda p: (p["all_in_inr"] is None, p["all_in_inr"] or 0))
+    plans.sort(key=lambda p: (p["nightly_all_in_inr"] is None,
+                              p["nightly_all_in_inr"] or 0))
     breakfast_only = bool(plans) and all(
         "breakfast" in (p.get("plan") or "").lower() for p in plans)
     return {
