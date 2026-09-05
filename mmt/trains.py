@@ -29,14 +29,16 @@ def resolve_station(name: str) -> str:
     n = (name or "").strip()
     if not n:
         raise BadInput("station is required")
+    # Known names always win over the alpha-code guess - "goa" must resolve
+    # to MAO via the dict, not bypass to the invalid code "GOA".
+    code = C.STATIONS.get(n.lower())
+    if code:
+        return code
     if 2 <= len(n) <= 5 and n.isalpha():
         return n.upper()
-    code = C.STATIONS.get(n.lower())
-    if not code:
-        raise BadInput(f"unknown station {name!r}",
-                       hint="Known: " + ", ".join(sorted(set(C.STATIONS))) +
-                            ". Or pass a station code directly, e.g. MDU.")
-    return code
+    raise BadInput(f"unknown station {name!r}",
+                   hint="Known: " + ", ".join(sorted(set(C.STATIONS))) +
+                        ". Or pass a station code directly, e.g. MDU.")
 
 
 def booking_opens(iso_date: str) -> str:

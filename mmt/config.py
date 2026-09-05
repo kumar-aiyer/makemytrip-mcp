@@ -82,6 +82,8 @@ STATIONS = {
     "kanyakumari": "CAPE", "nagercoil": "NCJ", "rameswaram": "RMM", "madurai": "MDU",
     "chennai egmore": "MS", "chennai central": "MAS", "chennai": "MAS",
     "new delhi": "NDLS", "delhi": "NDLS", "mumbai": "CSMT", "pune": "PUNE",
+    "goa": "MAO", "madgaon": "MAO", "margao": "MAO", "thivim": "THVM",
+    "vasco da gama": "VSG", "vasco": "VSG",
 }
 
 AIRPORTS = {

@@ -56,3 +56,8 @@
 ## The prompt
 
 Placeholder - will be written via Python
+
+
+## Live results 2026-09-04
+- Hotels T2: WORKING (Hyatt: 13,342 all-in)
+- Flights T2: BLOCKED (403)
