@@ -14,13 +14,18 @@ Always quote **base and tax separately, then the all-in figure**. MakeMyTrip dis
 apart and the all-in is roughly 18% above the headline; a single blended number is how
 budgets end up understated.
 
-Hotel prices are **stay totals for the whole date range**, not per night. Divide by nights
-before comparing properties with different stay lengths - the tools return
-`all_in_per_night_inr` for this.
+Hotel prices are **per night**, not stay totals for the range. Multiply by nights for a
+trip budget - the tools return `stay_estimate_all_in_inr` (`nightly x nights`) for this, and
+it is an **estimate**: MakeMyTrip quotes one representative nightly rate per range, not a
+per-date breakdown. The fields are `nightly_base_inr`, `nightly_tax_inr`, `nightly_all_in_inr`; the
+`nightly_` prefix is load-bearing. Anything that says "stay totals" or
+`all_in_per_night_inr` predates 2026-09-05 and is wrong.
 
 For a multi-stop trip use `mmt_price_itinerary` rather than looping `mmt_hotel_search`. It
-sums the legs it just fetched and returns the total in the same object, so the total cannot
-drift from the rows above it.
+multiplies each leg by its own nights and sums the legs it just fetched, returning
+`total_all_in_estimate_inr` in the same object, so the total cannot drift from the rows above
+it. Never add nightly rates across legs yourself - a two-night stay would count the same as a
+fortnight.
 
 ## Reading empty results
 

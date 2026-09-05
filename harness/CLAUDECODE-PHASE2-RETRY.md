@@ -1,5 +1,12 @@
 # Phase 2 acceptance run — retry after infrastructure fixes
 
+> **Historical. Executed 2026-09-05 and superseded; kept as the record of what was asked.**
+> Two statements in it are now known to be wrong and must not be reused: the hotel figures
+> it calls "stay totals" are **per night** (BUG-16), so its H-ARITH line understates a
+> 6-night stay by five nights; and it pre-scripted the `kulem` lookup, which means the run
+> it produced could not exercise gap-recovery gates GR1/GR2 at all. See
+> `harness/runs/2026-09-05/run-log.md` and the Phase 2 entries in `harness/findings.md`.
+
 You are continuing a Phase 2 acceptance run on branch `phase2/acceptance-run` (PR #7).
 A previous attempt failed because two MCP tools hung. The fixes are ALREADY APPLIED
 but UNCOMMITTED in the working tree. Your first job is to commit them.

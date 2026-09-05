@@ -28,9 +28,12 @@
 - [ ] H6: Every MCP-derived number traceable to an **exported** transcript tool call
       (spot-check 3 against `harness/runs/<date>/transcript.md`).
 - [ ] H7: fetched_at / staleness disclaimer present on prices.
-- [ ] H-ARITH: arithmetic reconciles — round-trip flights = (out + back) × 2 adults; hotel
-      = the stay total the tool returned, counted once; cab per vehicle (split stated); every
-      subtotal sums to the grand total; per-person = grand total ÷ 2.
+- [ ] H-ARITH: arithmetic reconciles — round-trip flights = (out + back) × 2 adults;
+      hotel = the tool's `nightly_all_in_inr` x nights, counted once (the tool's `stay_estimate_all_in_inr`) - NOT the nightly figure on its own; cab per
+      vehicle (split stated); every subtotal sums to the grand total; per-person = grand
+      total ÷ 2. **Hotel rates are PER NIGHT** (BUG-16, fixed 2026-09-05): quoting the
+      nightly figure as the stay cost understates a 6-night trip by five nights, which is
+      exactly how the 2026-09-05 run first got it wrong.
 
 ### Gap-recovery gates (MANDATORY — revised; see PHASE2-REVIEW.md claim 1)
 - [ ] GR1: At least one web/research call **prompted by a blocked or incomplete MCP

@@ -411,6 +411,13 @@ async def mmt_capabilities() -> dict:
         "experimental": {
             "cab_find_place": "drives the search form; falls back to a pasted URL",
         },
+        "refuses": {
+            "cab_quote same-day RT": "trip_type RT with return_date == date is "
+                                     "rejected: MakeMyTrip answers it with the "
+                                     "ONE-WAY listing, so quoting it as a round trip "
+                                     "would be a wrong number under a right label. "
+                                     "Quote it as OW - that is what those fares are",
+        },
         "booking_windows": {
             "hotels": "none - any future date prices",
             "cabs": "none on this endpoint; the ~60-day limit is only the website's "
@@ -421,7 +428,13 @@ async def mmt_capabilities() -> dict:
         },
         "pricing_conventions": {
             "currency": "INR",
-            "hotels": "stay totals for the whole range, not per night",
+            "hotels": "PER NIGHT (nightly_base_inr / nightly_tax_inr / "
+                      "nightly_all_in_inr). stay_estimate_all_in_inr is nightly x "
+                      "nights and is an ESTIMATE - MakeMyTrip quotes one "
+                      "representative nightly rate for a range, not a per-date "
+                      "breakdown. These were mislabelled as stay totals before "
+                      "2026-09-05; anything you were trained on that says otherwise "
+                      "is out of date",
             "flights": "per adult, one way, for the cabin searched",
             "split": "base, tax and all-in are always reported separately",
         },
@@ -429,7 +442,11 @@ async def mmt_capabilities() -> dict:
             "A wrong city or station code returns an empty result, not an error.",
             "Some properties are not sold on MakeMyTrip at all - absence is not "
             "the same as sold out.",
-            "Local 8hr/80km cab day packages use a different funnel and are not built.",
+            "Local 8hr/80km cab day packages use a different funnel and are not built. "
+            "Price a substitute (a short outstation one-way) or say you subtracted it - "
+            "do not leave local transport off an itinerary silently.",
+            "Hotel figures are per night. A stay line is nightly x nights and is an "
+            "estimate: a range spanning a price change will not match it exactly.",
             "Holiday packages are quoted per enquiry and are not searchable.",
             "A flight search takes ~30-60 s: the API cannot be called directly, so the "
             "server drives the site's own search page. Ask for one route and date at "

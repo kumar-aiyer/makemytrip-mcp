@@ -16,7 +16,7 @@ Runs anywhere that speaks MCP over stdio: **Claude Cowork** (as a plugin), **Ope
 | Tool | What it answers |
 |---|---|
 | `mmt_capabilities` | What can be priced, what the booking windows are, current health |
-| `mmt_hotel_search` | City + dates → priced list, base/tax/all-in, per-night derived |
+| `mmt_hotel_search` | City + dates → priced list, base/tax/all-in **per night**, plus a `nights x nightly` stay estimate |
 | `mmt_find_hotel_id` | Property name → MakeMyTrip hotelId |
 | `mmt_hotel_rates` | One property → every room type and rate plan, with meal plan and cancellation |
 | `mmt_price_itinerary` | A multi-stop trip → per-leg table **and a total summed server-side** |
