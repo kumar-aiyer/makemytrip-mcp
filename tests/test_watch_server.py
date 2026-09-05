@@ -26,7 +26,10 @@ ROOT = Path(__file__).resolve().parents[1]
 WATCH = ROOT / "tools" / "watch_server.py"
 
 STUB = (
-    "import json, os, sys\n"
+    "import json, os, sys, time\n"
+    "t = float(os.environ.get('STUB_STARTUP_DELAY', '0'))\n"
+    "if t:\n"
+    "    time.sleep(t)\n"
     "n = 0\n"
     "for line in sys.stdin:\n"
     "    n += 1\n"
@@ -48,9 +51,10 @@ def check(name: str, cond: bool, detail: str = "") -> None:
     RESULTS.append((name, bool(cond), detail))
 
 
-def _stub(exit_after: int = 999) -> tuple[list[str], dict[str, str]]:
+def _stub(exit_after: int = 999, startup_delay: float = 0.0) -> tuple[list[str], dict[str, str]]:
     env = dict(os.environ)
     env["STUB_EXIT_AFTER"] = str(exit_after)
+    env["STUB_STARTUP_DELAY"] = str(startup_delay)
     return [sys.executable, "-u", "-c", STUB, "stubchild"], env
 
 
@@ -298,8 +302,12 @@ def test_immediate_initialize_is_not_dropped() -> None:
     """The bug that caused Cline's 60s timeout: the host sends `initialize`
     the instant it connects, racing the watcher's initial child spawn. A frame
     arriving before the child exists must be buffered and replayed - never
-    silently dropped - or the host times out the whole connection."""
-    child, env = _stub()
+    silently dropped - or the host times out the whole connection.
+
+    The stub child is given a 1.5s startup delay, so the frame deterministically
+    arrives BEFORE the child exists - the test cannot pass by timing luck.
+    """
+    child, env = _stub(startup_delay=1.5)
     p = _spawn_watcher(_child_args(child), env)
     _drain_stderr(p)
     try:
@@ -308,12 +316,39 @@ def test_immediate_initialize_is_not_dropped() -> None:
         req = {"jsonrpc": "2.0", "id": 99, "method": "ping"}
         p.stdin.write(json.dumps(req).encode() + b"\n")
         p.stdin.flush()
-        line = _read_line(p, timeout=10)
+        line = _read_line(p, timeout=15)
         check("race: initialize answered despite racing the spawn",
               line is not None)
         if line:
             resp = json.loads(line.decode())
             check("race: id preserved", resp.get("id") == 99)
+    finally:
+        _kill(p)
+
+
+def test_client_eof_causes_clean_exit() -> None:
+    """When the host closes stdin (session ends, host exits), the watcher must
+    shut the child down and exit cleanly (0) - not hang, crash, or loop."""
+    child, env = _stub()
+    p = _spawn_watcher(_child_args(child), env)
+    err = _drain_stderr(p)
+    try:
+        ok = _wait_child_up(err)
+        check("eof: child came up", ok, "\n".join(err))
+        # Close stdin -> client->child feeder sees EOF -> main loop exits.
+        try:
+            p.stdin.close()
+        except OSError:
+            pass
+        try:
+            rc = p.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            rc = None
+            p.kill()
+            p.wait(timeout=5)
+        check("eof: exits 0", rc == 0, f"rc={rc}")
+        check("eof: stderr shows shutdown",
+              any("exiting (0)" in l for l in err))
     finally:
         _kill(p)
 
@@ -326,6 +361,7 @@ def main() -> None:
     test_stdout_is_protocol_only()
     test_real_server_handshake_through_watcher()
     test_immediate_initialize_is_not_dropped()
+    test_client_eof_causes_clean_exit()
     passed = sum(1 for _, ok, _ in RESULTS if ok)
     total = len(RESULTS)
     print(f"\n{passed}/{total} offline assertions passed (watch_server).")
