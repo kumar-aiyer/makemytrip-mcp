@@ -59,7 +59,7 @@ async def search(origin: str, dest: str, iso_date: str, *, adults: int = 2,
     url = search_url(origin, dest, iso_date, adults=adults, children=children,
                      infants=infants, cabin=cabin)
     res = await get_text(url, ec=FLIGHT_API, headers=C.flight_headers(), fresh=fresh,
-                         timeout=60.0)
+                         timeout=60.0, context_url=C.WWW + "/flights/")
     itineraries = parse_stream(res.text, max_results)
     out: dict[str, Any] = {
         "route": f"{origin.upper()}-{dest.upper()}",

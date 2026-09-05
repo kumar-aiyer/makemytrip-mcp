@@ -115,17 +115,35 @@ async def _click_best_suggestion(page, query: str) -> None:
 
 
 def _place_from_captured(bodies: list[dict], query: str) -> dict[str, Any] | None:
+    """Pick the best place object, preferring regional relevance over prefix luck.
+
+    Priority: exact name == query, then first-segment == query, then places whose
+    secondary_text contains the query (they are IN the region - e.g. "Panaji"
+    with secondary "Goa, India" for query "goa"), then first-segment startswith,
+    then substring, then the first place seen. This stops "goa" matching
+    "Goalpara, Assam" (prefix luck) when a place actually in Goa exists.
+    """
     q = query.strip().lower()
-    best: dict[str, Any] | None = None
+    exact = seg = regional = prefix = substr = best = None
     for body in bodies:
         for node in _walk(body):
             if not isinstance(node, dict) or not node.get("place_id"):
                 continue
             name = str(node.get("city") or node.get("main_text") or "").lower()
-            if q in name or name in q:
-                return node
+            first = name.split(",")[0].strip()
+            secondary = str(node.get("secondary_text") or "").lower()
+            if name == q:
+                exact = exact or node
+            elif first == q:
+                seg = seg or node
+            elif q in secondary:
+                regional = regional or node
+            elif first.startswith(q):
+                prefix = prefix or node
+            elif q in name:
+                substr = substr or node
             best = best or node
-    return best
+    return exact or seg or regional or prefix or substr or best
 
 
 def _place_from_url(url: str) -> dict[str, Any] | None:

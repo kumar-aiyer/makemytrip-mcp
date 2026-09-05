@@ -142,6 +142,43 @@ async def _t2_post(url: str, body: dict, headers: dict[str, str],
         return res["status"], res["text"]
 
 
+async def _t2_fetch_get(url: str, headers: dict[str, str], timeout: float,
+                        context_url: str) -> tuple[int, str]:
+    """GET an API via in-page fetch() from a same-site context page.
+
+    For API endpoints on other subdomains (flights-cb, mapi), navigating the
+    browser directly to the API URL is a NAVIGATION request, which Akamai
+    blocks. A real browser never does that - the site's page calls the API via
+    XHR with its own origin, referer and sensor state. This mirrors that: load
+    the context page (e.g. www.makemytrip.com/flights/), then fetch the API
+    from inside it with credentials.
+    """
+    async with SESSION.page() as page:
+        await page.goto(context_url, wait_until="domcontentloaded",
+                        timeout=timeout * 1000)
+        safe = {k: v for k, v in headers.items()
+                if k.lower() not in ('user-agent', 'accept-encoding', 'connection',
+                                     'cookie', 'cookie2', 'origin', 'referer',
+                                     'host', 'via', 'upgrade')}
+        res = await page.evaluate("""async ({url, headers}) => {
+            try {
+                const r = await fetch(url, {
+                    method: 'GET',
+                    headers: headers,
+                    credentials: 'include'
+                });
+                return {status: r.status, text: await r.text()};
+            } catch(e) {
+                return {error: e.toString()};
+            }
+        }""", {"url": url, "headers": safe})
+        if "error" in res:
+            raise Transport(f"In-page GET fetch failed: {res['error']}",
+                            hint="The context page may have been blocked, or the API "
+                                 "rejected the cross-origin call.")
+        return res["status"], res["text"]
+
+
 # --------------------------------------------------------------------- public fetch
 
 _LAST_BLOCKED: dict[str, float] = {}
@@ -183,7 +220,7 @@ def _record_failure(ec: str, err: MMTError) -> None:
 async def get_text(url: str, *, ec: str, headers: dict[str, str] | None = None,
                    wait_for: str | None = None, timeout: float = 45.0,
                    fresh: bool = False, cache_ttl: float = PRICE_TTL,
-                   cache_id: str | None = None,
+                   cache_id: str | None = None, context_url: str | None = None,
                    validate: Callable[[str], bool] | None = None) -> FetchResult:
     """GET with caching. `validate`, when given, runs on the body before caching:
     a silent-200 body that fails the caller's check is never cached (F3). A validator
@@ -211,6 +248,10 @@ async def get_text(url: str, *, ec: str, headers: dict[str, str] | None = None,
                 status, text = await asyncio.to_thread(_t0_get, url, hdrs, timeout)
             elif tier == Tier.REQUEST:
                 status, text = await _t1_get(url, hdrs, timeout)
+            elif context_url is not None:
+                # API endpoints on other subdomains: fetch from a context page
+                # (in-page XHR) rather than navigating to the API URL directly.
+                status, text = await _t2_fetch_get(url, hdrs, timeout, context_url)
             else:
                 status, text = await _t2_get(url, wait_for, timeout)
 
