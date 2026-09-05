@@ -104,6 +104,8 @@ class _Watcher:
         self.poll = max(0.05, poll)
         self.child = None
         self.out_lock = threading.Lock()
+        self._pending: list[bytes] = []
+        self._pending_lock = threading.Lock()
         self._failures = 0
         self._last_start = 0.0
         self._gone = False
@@ -127,6 +129,13 @@ class _Watcher:
         # i.e. when this particular child exits.
         _Pump(self.child.stdout, sys.stdout.buffer, "child->client",
               self.out_lock).start()
+        # Flush any client frames that arrived while no child was running (the
+        # initial handshake races this spawn; a crash-reload gap can too).
+        with self._pending_lock:
+            pending = self._pending
+            self._pending = []
+        for frame in pending:
+            self.write_client(frame)
         _log(f"child up pid={self.child.pid} ({reason})")
 
     def stop_child(self) -> None:
@@ -156,15 +165,24 @@ class _Watcher:
         _log(f"child stopped exit={old.returncode}")
 
     def write_client(self, data: bytes) -> None:
-        """Client stdin -> current child stdin. Requires no round-trip state."""
-        c = self.child
-        if c is None:
-            return
+        """Client stdin -> current child stdin.
+
+        If no child is up yet (the initial spawn races the very first frames,
+        and a crash-reload gap can too), the frame is buffered and flushed once
+        the next child starts rather than being dropped - a dropped initialize
+        would make the host time out the connection.
+        """
+        with self._pending_lock:
+            c = self.child
+            if c is None or c.poll() is not None:
+                self._pending.append(data)
+                return
         try:
             c.stdin.write(data)
             c.stdin.flush()
         except (BrokenPipeError, OSError):
-            pass
+            with self._pending_lock:
+                self._pending.append(data)
 
     # -- supervision --------------------------------------------------------
 

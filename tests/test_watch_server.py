@@ -294,6 +294,30 @@ def test_real_server_handshake_through_watcher() -> None:
         _kill(p)
 
 
+def test_immediate_initialize_is_not_dropped() -> None:
+    """The bug that caused Cline's 60s timeout: the host sends `initialize`
+    the instant it connects, racing the watcher's initial child spawn. A frame
+    arriving before the child exists must be buffered and replayed - never
+    silently dropped - or the host times out the whole connection."""
+    child, env = _stub()
+    p = _spawn_watcher(_child_args(child), env)
+    _drain_stderr(p)
+    try:
+        # No sleep: write the very first frame immediately, before the watcher
+        # has had a chance to spawn the child.
+        req = {"jsonrpc": "2.0", "id": 99, "method": "ping"}
+        p.stdin.write(json.dumps(req).encode() + b"\n")
+        p.stdin.flush()
+        line = _read_line(p, timeout=10)
+        check("race: initialize answered despite racing the spawn",
+              line is not None)
+        if line:
+            resp = json.loads(line.decode())
+            check("race: id preserved", resp.get("id") == 99)
+    finally:
+        _kill(p)
+
+
 def main() -> None:
     test_transparent_relay()
     test_child_respawns_after_crash()
@@ -301,6 +325,7 @@ def main() -> None:
     test_gives_up_on_unstartable_child()
     test_stdout_is_protocol_only()
     test_real_server_handshake_through_watcher()
+    test_immediate_initialize_is_not_dropped()
     passed = sum(1 for _, ok, _ in RESULTS if ok)
     total = len(RESULTS)
     print(f"\n{passed}/{total} offline assertions passed (watch_server).")
