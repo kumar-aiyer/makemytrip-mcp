@@ -1,4 +1,5 @@
 # Goa Itinerary — Canonical Prompt & Audit Checklist
+
 ## The prompt (paste verbatim into a fresh Cline session)
 
 > Staring on December 15th from Bengalure, provide me an itinerary with budget for a visit to goa for a week. Use the makemytrip-mcp for details and getting indicative pricing. Present a polished pdf report with places to visit with transport details for entire trip (you the reasoning model + MCP decide), hotels to stay and local transportation. The pricing should be broken out by each itinerary line item.
@@ -36,28 +37,23 @@
 
 ---
 
-## Phase 1 ground truths (captured 2026-09-05)
+## Phase 1 ground truths (captured 2026-09-05, updated after live fixes)
 
-| Check | Result |
-|---|---|
-| 1.3a: resolve_station("Goa") | Returns "GOA" — WRONG! 2-5 char code bypass. Real Goa station codes: MAO (Madgaon) or THVM (Thivim). Requires web research. |
-| 1.3b: resolve_station("MAO") | Returns "MAO" — direct code acceptance works. |
-| 1.3c: in_window("2026-12-15") | False (101 days out). booking_opens = 2026-10-16. |
-| 1.1: Hotel search GOI Dec 15-21 | FAILS: T1 ctx.request.post returns stub "200-OK". No T2 POST path exists in current code. |
-| 1.2: Cab find place Goa | Not run (needs Cline MCP restart). |
-| 1.4: Flight search BLR-GOI Dec 15 | Not run (needs Cline MCP restart or direct Python). |
+| # | Check | Result |
+|---|---|---|
+| 1.1 | Hotel Goa 2026-12-15→21 | ✅ **T2 POST works.** Hyatt Centric: base=11,500, tax=1,842, all_in=13,342 (6N). Baga Beach Hotel: 2,493 all-in. tier_used=2, arithmetic clean. |
+| 1.2 | Cab find place | ✅ **Works.** "goa" → "Goa beach, Calangute" (secondary_text contains Goa); "Panaji" → exact city. Regional-priority matcher replaced the Goalpara bug. Place registered for quotes. |
+| 1.3 | Train Bengaluru→goa | ✅ **Station resolver fixed.** `resolve_station("goa")` = MAO (dict now precedes alpha bypass). Dec 15 → `not_in_window`, booking_opens=2026-10-16, route SBC-MAO. |
+| 1.4 | Flight BLR→GOI Dec 15 | ❌ **EXPERIMENTAL / BLOCKED.** Every automated path to flights-cb fails (see Key finding 3). No live itinerary available from MCP. Perplexity web benchmark (must be labeled): IndiGo ₹4,000–7,000, Air India ₹5,000–9,000 one-way/pp, peak Dec. |
 
-### Key structural findings
-1. **Hotel POST gap (blocking):** T1 `ctx.request.post` returns stub "200-OK" from this network. T2 in-page `page.evaluate(fetch)` works but is not wired into `post_json` — it caps at REQUEST tier. This is the #1 infrastructure gap for this test.
-2. **Train station gap (intentional):** Goa absent from STATIONS dict. MAO/THVM accepted by resolver. Model must web-research → discover → re-query MCP. This is the exact gap-recovery pattern the test measures.
-3. **Flight search:** Experimental with inferred field names — parser may degrade. Result carries raw_head for fixture capture.
-# Goa Itinerary - Canonical Prompt
-
-## The prompt
-
-Placeholder - will be written via Python
-
-
-## Live results 2026-09-04
-- Hotels T2: WORKING (Hyatt: 13,342 all-in)
-- Flights T2: BLOCKED (403)
+### Key structural findings (current)
+1. **Hotel POST — FIXED.** `_t2_post` uses `page.evaluate(fetch)` with fresh cookies + safe headers. Verified live.
+2. **Train station — FIXED.** `goa→MAO`, `madgaon→MAO`, `thivim→THVM`, `vasco→VSG` added; resolver dict-first. The gap-recovery test now exercises via the **flight block** instead (GR1/GR2/GR3 still fire).
+3. **Flight search — blocked from automation (definitive, 2026-09-05):** header contract captured (app-ver, mcid, device-id, os, src, authorization...) but:
+   - `ctx.request` → Akamai "Access Denied" (non-page network context)
+   - `page.evaluate(fetch)` with custom headers → CORS preflight to flights-cb rejected (automated browser has no user-session preflight cache)
+   - bare fetch → API 403 "Missing Header app-ver"
+   - Search-click navigation → results page renders Akamai "200-ok" stub
+   - **Proven-working path is the user's real browser only.** Possibly fixable by manually opening MMT once in the server's Chrome profile (caches preflight + sensor state).
+   
+   → **Model must disclose this limitation and use web-researched fares labeled as such (H5 + GR3).**

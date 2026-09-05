@@ -34,6 +34,29 @@ CAB_LISTING = f"{WWW}/cabs/listing"
 CAB_HOME = f"{WWW}/cabs/"
 HOME = f"{WWW}/?cc=IN&lang=eng"
 
+# Flights API header contract - captured from the site's own XHR (2026-09-05).
+# search-stream-dt rejects the call with a 403 JSON naming each missing header
+# in turn. The site sends ALL of these from its own JS:
+#
+#   authorization:  (context-generated bearer - changes per session)
+#   app-ver: 1.0.0    device-id / deviceid / usr-mcid / vid / tid / mcid:
+#                     the same device UUID repeated
+#   os: DESKTOP       src: src           pfm: DESKTOP
+#   language: eng     region: in         currency: INR    user-currency: INR
+#   entity-name: india  user-country: IN  lob: B2C        source: MMT
+#   profile-type: PERSONAL
+#
+# From an automated context every path we tested fails the same way (2026-09-05):
+#   - ctx.request  -> Akamai "Access Denied" HTML (non-page TLS/cookie context)
+#   - page.evaluate(fetch) with custom headers -> CORS preflight to flights-cb
+#     is rejected (no user-session preflight cache), so the browser throws
+#   - bare fetch (no headers) -> reaches the API, 403 "Missing Header app-ver"
+#   - clicking Search -> results page renders the Akamai "200-ok" stub, so the
+#     site's flight JS never runs on it
+# The ONLY proven-working path is the user's real browser. If the server's Chrome
+# profile is manually opened on MMT once, the preflight cache + sensor state may
+# carry over to automation. See docs/API-REFERENCE.md for the manual capture recipe.
+
 # ------------------------------------------------------------------- the magic bits
 
 # The full experiment string the desktop hotel bundle sends.
