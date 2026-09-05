@@ -118,6 +118,11 @@ reads a stale tool surface.
 4. `python tests/test_parsers.py` — **140/140** (not 112; that number predates the
    BUG-13..16 regression tests).
 5. Snapshot `.state/data.json` (the snippet above does it).
+6. **Truncate the call log** so the run's log is only the run:
+
+   ```bash
+   MMT_MCP_HOME=.state python -c "import mmt.calllog as L; L.path().write_text('')"
+   ```
 
 ---
 
@@ -188,12 +193,18 @@ What you are actually watching for, in order of interest:
    per-night in three places. This is the newest gate and the least tested.
 6. Does it price a local-transport substitute rather than omitting the line (**H4**)?
 
-## Step 2b — export the transcript
+## Step 2b — evidence
 
-Cline: History → hover the session → **Export**, saved as
-`harness/runs/<date>/transcript.md`. Do this **before** closing the session. H6 is defined
-against the exported file, and a spot-check of three numbers is not reconstructable from
-memory.
+**H6 no longer depends on the host.** The server logs every call itself to
+`.state/diagnostics/calls.jsonl`. Nothing to remember mid-run; copy it at close-out:
+
+```bash
+cp .state/diagnostics/calls.jsonl harness/runs/<date>/calls.jsonl
+```
+
+Still export the host transcript if the host produces a usable one — it shows *reasoning*,
+which the call log does not. But three runs in a row Cline exported a screenshot, a session
+tail, and the final artifact, so nothing is gated on it any more.
 
 ---
 
@@ -215,6 +226,18 @@ print(r.pages[0].extract_text()[:800])"
 
 and re-sum the line-item table yourself for H-ARITH. Do not trust a total the model printed;
 the point of the gate is that the auditor reaches the same number independently.
+
+For H6, spot-check at least three figures off the deliverable:
+
+```bash
+MMT_MCP_HOME=.state python tools/audit_calls.py --summary
+MMT_MCP_HOME=.state python tools/audit_calls.py --find 4367
+```
+
+`--find` names the call, its arguments, tier, timestamp and the path inside the result where
+the figure appears; it exits 2 when a figure appears in no call at all. That is the check
+that catches a relabelled number — the void run billed "Panaji → Kulem" at the Panaji → Goa
+fare for a route never quoted, and nothing in the deliverable revealed it.
 
 Sanity band for 6N/7D for two, from `PHASE2-TASKS.md`: **₹75-90k low / ₹1.15-1.35L mid /
 ₹1.75-2.1L high**. Outside the band, re-check H-ARITH before signing off — it never fails

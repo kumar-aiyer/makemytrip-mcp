@@ -655,3 +655,57 @@ append-only JSONL of tool, arguments, elapsed, tier and a result digest, alongsi
 `failures.jsonl` that today records only failures. Then H6 is satisfied from the server's
 own log, independently of the host, and the spot-check is mechanical. Until that exists,
 every future acceptance run is one export bug away from being unscoreable.
+
+---
+
+## Run 2026-09-05 — the server records its own calls (H6 no longer depends on the host)
+
+`mmt/calllog.py` appends one JSON object per tool call to
+`.state/diagnostics/calls.jsonl`, beside the `failures.jsonl` that until now recorded only
+failures. `tools/audit_calls.py` reads it. Offline suite **153/153** (13 new assertions).
+
+**Why, in one line:** three acceptance runs, three hosts-of-record, three unusable
+transcripts — a screenshot, a session tail, and the final artifact. H6 made this project's
+acceptance evidence depend on a third-party UI's export button, and the server already knew
+everything the gate was asking for.
+
+### Design choices worth keeping
+
+- **Hooked into the `@tool` decorator, not `server.py`'s `tools/call`.** `tools/probe.py`
+  and the harness drivers call `TOOLS[...]["fn"]` directly, and an audit log with holes in
+  it is worse than no log at all.
+- **Handled errors are logged too.** `unregistered_place` and `bad_input` are results, not
+  absences; a gate that only sees successes cannot tell "never asked" from "asked and was
+  refused" — which is exactly the distinction the void run's audit turned on.
+- **The result body is inlined** (to `MMT_CALL_LOG_MAX_RESULT`, default 256 KB) so a
+  spot-check finds a fare without a second live call. The **digest is over the full body**
+  either way, so a truncated entry still proves what was returned.
+- **A broken log can never break a call.** Every write is wrapped; `MMT_CALL_LOG=0` disables
+  it. Tested by pointing `DIAG_DIR` under a regular file so `mkdir` raises.
+
+### The spot-check is now mechanical
+
+```
+$ python tools/audit_calls.py --find 12161
+2026-09-05T13:57:55-0700  mmt_cab_quote  {"origin": "bengaluru", "dest": "goa", ...}
+    30774 ms, tier 2, cached False, sha256 ed66b43a0ce540d9
+    found at: cabs[0].all_in_inr
+    found at: cheapest.all_in_inr
+
+$ python tools/audit_calls.py --find 99999
+99999 appears in NO logged call result. It did not come from this server.   # exit 2
+```
+
+That second case is the one that matters. The void run billed *"Panaji → Kulem, ₹1,945,
+`mmt_cab_quote`"* when ₹1,945 was the Panaji → **Goa** quote and no Panaji → Kulem call was
+ever made. Nothing in the deliverable revealed it and the transcript could not be checked.
+`--find` would have named the real call in one command.
+
+H6 in `prompts/goa-itinerary.md`, `PHASE2-TASKS.md` and the runbook now reads against this
+log. The pre-flight truncates it so a run's log is only that run; close-out copies it to
+`harness/runs/<date>/calls.jsonl`, which also gets the evidence into git — `.state/` is
+ignored, so it would not otherwise survive.
+
+**This does not retro-fit the Sonnet-5 run.** The log did not exist while it ran, so that
+run's H6 stays unscoreable. It is scoreable from the next one onwards, without asking the
+host for anything.

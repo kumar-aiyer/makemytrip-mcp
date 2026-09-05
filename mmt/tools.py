@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import functools
 import inspect
+import time
 from datetime import date, timedelta
 from typing import Any, Callable
 
 from . import cabs as CB
+from . import calllog as CALLLOG
 from . import config as C
 from . import flights as FL
 from . import harvest as HV
@@ -34,14 +36,22 @@ def tool(name: str, schema: dict[str, Any]) -> Callable:
     def deco(fn: Callable) -> Callable:
         @functools.wraps(fn)
         async def wrapper(**kwargs):
+            # Every tool result - answers and handled errors alike - is recorded here.
+            # This is the choke point rather than server.py's tools/call because
+            # tools/probe.py and the harness drivers call TOOLS[...]["fn"] directly, and
+            # an audit log with holes in it is worse than none.
+            t0 = time.perf_counter()
             try:
-                return await fn(**kwargs)
+                result = await fn(**kwargs)
             except MMTError as e:
-                return e.to_result()
+                result = e.to_result()
             except TypeError as e:
-                return {"error": f"bad arguments: {e}", "kind": "bad_input"}
+                result = {"error": f"bad arguments: {e}", "kind": "bad_input"}
             except Exception as e:
-                return {"error": f"{type(e).__name__}: {e}", "kind": "unexpected"}
+                result = {"error": f"{type(e).__name__}: {e}", "kind": "unexpected"}
+            CALLLOG.record(name, kwargs, result,
+                           int((time.perf_counter() - t0) * 1000))
+            return result
         TOOLS[name] = {"fn": wrapper, "schema": schema,
                        "description": inspect.getdoc(fn) or ""}
         return wrapper

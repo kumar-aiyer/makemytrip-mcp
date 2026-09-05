@@ -37,8 +37,14 @@
       subtract-and-say-so. An empty local-transport line fails.
 - [ ] H5: Flight fares labeled per adult, and any `alternate_airport` itinerary (GOX/SDW)
       not presented as a fare into GOI — on the outbound **and the return**.
-- [ ] H6: Every MCP-derived number traceable to an **exported** transcript tool call
-      (spot-check 3 against `harness/runs/<date>/transcript.md`).
+- [ ] H6: Every MCP-derived number traceable to a real tool call, scored against the
+      **server's own call log** (`.state/diagnostics/calls.jsonl`, copied into
+      `harness/runs/<date>/calls.jsonl` at close-out):
+      `python tools/audit_calls.py --find <figure>` for at least 3 figures.
+      A figure that appears in no logged call did not come from this server.
+      *(Was "against the exported transcript" until 2026-09-05. Three runs and three hosts
+      failed to export a usable one, which made the project's acceptance evidence depend on
+      a third-party UI's export button. The server records its own calls now.)*
 - [ ] H7: fetched_at / staleness disclaimer present on prices.
 - [ ] H-ARITH: arithmetic reconciles — round-trip flights = (out + back) × 2 adults;
       hotel = the tool's `nightly_all_in_inr` x nights, counted once (the tool's `stay_estimate_all_in_inr`) - NOT the nightly figure on its own; cab per

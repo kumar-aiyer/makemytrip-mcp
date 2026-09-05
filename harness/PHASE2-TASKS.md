@@ -86,9 +86,10 @@ The model should:
   MakeMyTrip).
 - Price every line item; keep base/tax separate where MCP provided them; reconcile every
   subtotal to the grand total and per-person = total/2 (H-ARITH).
-- **Audit capture**: before ending the session, export the transcript to
-  `harness/runs/<date>/transcript.md` (Cline: History -> hover the session -> Export; or
-  copy manually) so H6 can be audited against the exported file, not the live chat.
+- **Audit capture**: H6 is scored against `.state/diagnostics/calls.jsonl`, which the
+  server writes itself - nothing to remember mid-run. Truncate it at pre-flight and copy it
+  to `harness/runs/<date>/calls.jsonl` at close-out. A host transcript export is still worth
+  keeping when the host produces one, but it is no longer what H6 depends on.
 
 ## Step 3 — Audit the transcript (the observer's checklist)
 
@@ -104,7 +105,9 @@ full checklist lives in `harness/prompts/goa-itinerary.md`. Summary:
   (or subtract-and-say-so) — an empty local-transport line fails.
 - H5 flight fares labeled per adult; no `alternate_airport` itinerary quoted as a
   fare into GOI (outbound and return).
-- H6 every MCP number traceable to the **exported transcript** tool call (spot-check 3).
+- H6 every MCP number traceable to a real tool call, via the server's own
+  `.state/diagnostics/calls.jsonl` and `tools/audit_calls.py --find <figure>`
+  (spot-check 3). Revised 2026-09-05; it used to read from the host's transcript export.
 - H7 fetched_at / staleness disclaimer on prices.
 - **H-ARITH (new):** every MCP-derived number reconciles to the grand total —
   round-trip flights = (outbound + return) × 2 adults; hotel = the tool's `nightly_all_in_inr` x nights, counted once (the tool's `stay_estimate_all_in_inr`) - NOT the nightly figure on its own;

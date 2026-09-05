@@ -12,6 +12,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from mmt import cabs as CB          # noqa: E402
+from mmt import calllog as CALLLOG  # noqa: E402
 from mmt import flights as FL       # noqa: E402
 from mmt import hotels as HO        # noqa: E402
 from mmt import rsc                 # noqa: E402
@@ -395,7 +396,7 @@ def test_null_prices_through_fetch() -> None:
 
 
 def test_cab_summary_hours() -> None:
-    """BUG-15 regression: fractional hours. `\d+` did not truncate 11.5 to 11 - it
+    r"""BUG-15 regression: fractional hours. `\d+` did not truncate 11.5 to 11 - it
     backtracked past the decimal point and matched the 5, so an 11.5 hour drive was
     reported as 5, which reads as plausible and is off by a factor of two."""
     cases = [
@@ -497,6 +498,73 @@ def test_oversize_body_through_fetch() -> None:
     asyncio.run(run())
 
 
+def test_call_log() -> None:
+    """The audit log H6 should be scored against. It must capture answers AND handled
+    errors, digest the full body even when it inlines a truncated one, and never let a
+    logging problem reach the caller."""
+    import asyncio
+    import os
+    import tempfile
+    from unittest.mock import patch
+
+    with tempfile.TemporaryDirectory() as tmp:
+        diag = pathlib.Path(tmp) / "diagnostics"
+        with patch.object(CALLLOG.C, "DIAG_DIR", diag):
+            CALLLOG.record("mmt_demo", {"a": 1}, {"all_in_inr": 4367, "tier_used": 2,
+                                                  "cached": False}, 123)
+            CALLLOG.record("mmt_demo", {"a": 2},
+                           {"error": "nope", "kind": "bad_input"}, 4)
+            rows = CALLLOG.read()
+
+        check("calllog: both calls recorded", len(rows) == 2, str(len(rows)))
+        ok, err = rows
+        check("calllog: success flagged ok", ok["ok"] is True)
+        check("calllog: routing facts captured",
+              ok["tier_used"] == 2 and ok["cached"] is False)
+        check("calllog: result inlined for spot-checks",
+              ok["result"]["all_in_inr"] == 4367)
+        check("calllog: digest present", len(ok["result_sha256"]) == 64)
+        check("calllog: handled error recorded, not dropped",
+              err["ok"] is False and err["kind"] == "bad_input")
+
+        # a body over the inline cap keeps its digest but drops the body
+        with patch.object(CALLLOG.C, "DIAG_DIR", diag),              patch.object(CALLLOG, "MAX_RESULT", 50):
+            big = {"rows": ["x" * 200]}
+            CALLLOG.record("mmt_big", {}, big, 1)
+            rows = CALLLOG.read()
+        last = rows[-1]
+        check("calllog: oversized body not inlined", "result" not in last)
+        check("calllog: oversized body still flagged",
+              last.get("result_truncated") is True)
+        import hashlib, json as _json
+        full = _json.dumps(big, sort_keys=True, default=str, ensure_ascii=False)
+        check("calllog: digest is over the FULL body, not the stored one",
+              last["result_sha256"] == hashlib.sha256(full.encode()).hexdigest())
+
+        # disabled by env
+        with patch.dict(os.environ, {"MMT_CALL_LOG": "0"}):
+            check("calllog: MMT_CALL_LOG=0 disables it", CALLLOG.enabled() is False)
+
+    # an unwritable log must never break a call: DIAG_DIR under a regular FILE, so
+    # mkdir raises NotADirectoryError inside record()
+    with tempfile.TemporaryDirectory() as tmp2:
+        blocker = pathlib.Path(tmp2) / "iam_a_file"
+        blocker.write_text("x", encoding="utf-8")
+        with patch.object(CALLLOG.C, "DIAG_DIR", blocker / "cannot" / "exist"):
+            CALLLOG.record("mmt_demo", {}, {"x": 1}, 1)
+    check("calllog: a broken log cannot break a call", True)
+
+    # and the decorator actually calls it
+    from mmt import tools as T
+    recorded = []
+    with patch.object(T.CALLLOG, "record", lambda *a: recorded.append(a)):
+        asyncio.run(T.TOOLS["mmt_version"]["fn"]())
+    check("calllog: the @tool decorator records", len(recorded) == 1,
+          str(len(recorded)))
+    check("calllog: decorator passes the tool name",
+          recorded and recorded[0][0] == "mmt_version")
+
+
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
@@ -505,7 +573,8 @@ def main() -> int:
                test_router, test_validators,
                test_recover_gating, test_null_prices_through_fetch,
                test_cab_summary_hours, test_cab_trip_validation,
-               test_cache_byte_budget, test_oversize_body_through_fetch):
+               test_cache_byte_budget, test_oversize_body_through_fetch,
+               test_call_log):
         try:
             fn()
         except Exception as e:
