@@ -10,6 +10,7 @@ from . import config as C
 from . import state as ST
 from .cache import STRUCTURAL_TTL
 from .errors import BadInput, EmptyValid, NullPrices, ShapeDrift
+from .cache import key as cache_key
 from .fetch import get_text, post_json
 from .router import HOTEL_API, HOTEL_PAGE
 
@@ -111,8 +112,14 @@ async def search(city_code: str, check_in: str, check_out: str, *, adults: int =
                       adults=adults, rooms=rooms, child_ages=child_ages, limit=limit,
                       hotel_ids=hotel_ids, star_rating=star_rating)
 
+    # Keyed on the search, not the body: build_body stamps a fresh requestId, which
+    # would make every call a cache miss.
+    ck = cache_key("POST:" + HOTEL_API, {
+        "city": city_code, "in": check_in, "out": check_out, "adults": adults,
+        "rooms": rooms, "children": child_ages or [], "limit": limit,
+        "hotel_ids": hotel_ids or [], "star": star_rating})
     res = await post_json(C.SEARCH_HOTELS, body, ec=HOTEL_API, fresh=fresh,
-                          validate=body_valid)
+                          cache_id=ck, validate=body_valid)
     data = res.data
     if not isinstance(data, dict) or "response" not in data:
         raise ShapeDrift("search-hotels returned no `response` object.")
@@ -269,11 +276,29 @@ def _cancel_text(cp: Any) -> str | None:
     return str(cp) if cp else None
 
 
+def detail_valid(html: str) -> bool:
+    """A detail page is usable only if it carries __INITIAL_STATE__.
+
+    Without this the Akamai stub counts as a successful tier-1 fetch: the domain
+    layer raises ShapeDrift afterwards, too late for the router to escalate to the
+    tier that would have worked - and the stub gets cached for 20 minutes on the way
+    past. Every other page fetch here has a validator; this one was missed.
+    """
+    return ST.extract(html) is not None
+
+
 async def room_rates(hotel_id: str, city_code: str, check_in: str, check_out: str, *,
                      adults: int = 2, rooms: int = 1,
                      fresh: bool = False) -> dict[str, Any]:
     url = detail_url(hotel_id, city_code, check_in, check_out, adults, rooms)
-    res = await get_text(url, ec=HOTEL_PAGE, wait_for="networkidle", fresh=fresh)
+    # funnel_url: the detail page is stubbed when arrived at cold. A hotel *listing*
+    # page is the funnel that holds up under a run of back-to-back calls; the
+    # homepage works in isolation but not reliably in sequence.
+    # domcontentloaded, not networkidle: __INITIAL_STATE__ is server-rendered and is
+    # already in the HTML, while the page itself keeps chattering long enough to blow
+    # a 45 s networkidle wait.
+    res = await get_text(url, ec=HOTEL_PAGE, wait_for="domcontentloaded", fresh=fresh,
+                         funnel_url=C.HOTEL_API_CONTEXT, validate=detail_valid)
     st = ST.extract(res.text)
     if st is None:
         raise ShapeDrift(

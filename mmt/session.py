@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import time
@@ -77,6 +78,58 @@ def playwright_available() -> tuple[bool, str]:
     return True, ""
 
 
+
+def _profile_pids() -> list[int]:
+    """PIDs of browsers holding *our* profile directory, and only ours.
+
+    Matched on the absolute profile path in the command line, so a user's own Chrome
+    is never a candidate. Used to clear orphans left by a killed run - without this
+    they hold the profile lock, and every later launch hands its startup URL to the
+    orphan and exits (the about:blank tab-storm).
+    """
+    prof = str(C.PROFILE_DIR).lower()
+    pids: list[int] = []
+    try:
+        if os.name == "nt":
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' or "
+                 "Name='msedge.exe'\" | ForEach-Object "
+                 "{ \"$($_.ProcessId)|$($_.CommandLine)\" }"],
+                capture_output=True, text=True, timeout=25)
+        else:
+            out = subprocess.run(["ps", "-eo", "pid=,args="],
+                                 capture_output=True, text=True, timeout=25)
+    except Exception:
+        return pids
+    for line in (out.stdout or "").splitlines():
+        line = line.strip()
+        if not line or prof not in line.lower():
+            continue
+        head = line.split("|", 1)[0] if os.name == "nt" else line.split(None, 1)[0]
+        try:
+            pids.append(int(head.strip()))
+        except ValueError:
+            continue
+    return pids
+
+
+def sweep_orphans() -> int:
+    """Kill browsers holding our profile. Returns how many were killed."""
+    killed = 0
+    for pid in _profile_pids():
+        try:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                               capture_output=True, timeout=20)
+            else:
+                os.kill(pid, signal.SIGKILL)
+            killed += 1
+        except Exception:
+            continue
+    return killed
+
+
 class Session:
     """Owns one persistent browser context, warmed and reused."""
 
@@ -87,6 +140,8 @@ class Session:
         self._browser = None          # set only on the CDP path
         self._proc: subprocess.Popen | None = None
         self._keepalive = None        # a tab that is never closed; see _finish_launch
+        self._no_cdp = False          # set once the CDP path has proved unusable
+        self._inflight = 0            # operations holding a page or a request slot
         self._lock = asyncio.Lock()
         self._page_lock = asyncio.Lock()
         self._sema = asyncio.Semaphore(4)
@@ -121,9 +176,21 @@ class Session:
             self._touch()
         if not self._warm:
             try:
-                await self.warmup()
+                warm = await self.warmup()
             except Exception:
-                pass
+                warm = {"ok": False}
+            # A self-launched Chrome that could not take the profile lock still starts
+            # ("Chrome cannot read and write to its data directory") but browses
+            # nothing, and every later call then fails in ways that look like the site
+            # refusing us. Clearance cookies are the cheap proof it is really working.
+            if self._browser is not None and not warm.get("had_abck"):
+                async with self._lock:
+                    await self._teardown()
+                    self._no_cdp = True
+                    await self._launch()
+                    self._touch()
+                with contextlib.suppress(Exception):
+                    await self.warmup(force=True)
         return self._ctx
 
     async def _launch(self) -> None:
@@ -139,9 +206,10 @@ class Session:
         """
         C.PROFILE_DIR.mkdir(parents=True, exist_ok=True)
         errors: list[str] = []
-        with contextlib.suppress(Exception):
-            if await self._launch_cdp(errors):
-                return
+        if not self._no_cdp:
+            with contextlib.suppress(Exception):
+                if await self._launch_cdp(errors):
+                    return
         await self._launch_playwright(errors)
 
     async def _launch_cdp(self, errors: list[str]) -> bool:
@@ -152,16 +220,44 @@ class Session:
             errors.append("cdp: no Chrome or Edge executable found")
             return False
 
+        for attempt in range(2):
+            if await self._spawn_and_attach(exe, errors):
+                break
+            if attempt == 0:
+                # Almost always an orphan holding the profile lock: Chrome then hands
+                # the launch to it and exits 0, which reads as "Chrome exited".
+                killed = await asyncio.to_thread(sweep_orphans)
+                errors.append(f"cdp: swept {killed} orphaned browser process(es)")
+                await asyncio.sleep(2.0)
+        else:
+            return False
+
+        self._ctx = (self._browser.contexts[0] if self._browser.contexts
+                     else await self._browser.new_context())
+        self.browser_desc = f"{os.path.basename(exe)} (self-launched, CDP)"
+        # A self-launched Chrome quits when its last tab closes, and every worker
+        # page here is closed after use. Hold one tab open for the session's life.
+        with contextlib.suppress(Exception):
+            self._keepalive = (self._ctx.pages[0] if self._ctx.pages
+                               else await self._ctx.new_page())
+        await self._finish_launch()
+        return True
+
+    async def _spawn_and_attach(self, exe: str, errors: list[str]) -> bool:
+        from playwright.async_api import async_playwright
+
         port = _free_port()
         args = [
             exe,
             f"--remote-debugging-port={port}",
-            f"--user-data-dir={C.PROFILE_DIR}",
+            f"--user-data-dir={os.path.abspath(C.PROFILE_DIR)}",
             "--no-first-run", "--no-default-browser-check",
             "--disable-features=Translate",
             "--lang=en-IN",
             "--window-size=1440,900",
-            "about:blank",
+            # No startup URL on purpose. If this launch is ever handed off to an
+            # instance already holding the profile, a URL here becomes a stray tab in
+            # the user's window - that is the about:blank tab-storm.
         ]
         if self.cfg.headless:
             args.insert(1, "--headless=new")
@@ -191,16 +287,6 @@ class Session:
             errors.append(f"cdp attach: {type(last).__name__ if last else 'Timeout'}: {last}")
             self._kill_proc()
             return False
-
-        self._ctx = (self._browser.contexts[0] if self._browser.contexts
-                     else await self._browser.new_context())
-        self.browser_desc = f"{os.path.basename(exe)} (self-launched, CDP)"
-        # A self-launched Chrome quits when its last tab closes, and every worker
-        # page here is closed after use. Hold one tab open for the session's life.
-        with contextlib.suppress(Exception):
-            self._keepalive = (self._ctx.pages[0] if self._ctx.pages
-                               else await self._ctx.new_page())
-        await self._finish_launch()
         return True
 
     async def _launch_playwright(self, errors: list[str]) -> None:
@@ -321,9 +407,11 @@ class Session:
         ctx = await self.ensure()
         async with self._page_lock:
             page = await ctx.new_page()
+            self._inflight += 1
             try:
                 yield page
             finally:
+                self._inflight -= 1
                 with contextlib.suppress(Exception):
                     await page.close()
                 self._touch()
@@ -332,7 +420,11 @@ class Session:
     async def slot(self) -> AsyncIterator[None]:
         """Concurrency limiter for tier-1 requests."""
         async with self._sema:
-            yield
+            self._inflight += 1
+            try:
+                yield
+            finally:
+                self._inflight -= 1
         self._touch()
 
     async def is_healthy(self) -> bool:
@@ -354,8 +446,6 @@ class Session:
             with contextlib.suppress(Exception):
                 if not self._browser.is_connected():
                     return False
-        if self._proc is not None and self._proc.poll() is not None:
-            return False
         return True
 
     async def _teardown(self) -> None:
@@ -374,7 +464,20 @@ class Session:
             with contextlib.suppress(Exception):
                 await self._ctx.close()
             self._ctx = None
+        had_proc = self._proc is not None
         self._kill_proc()
+        if had_proc:
+            # The process we spawned is not necessarily the browser (see _alive), so
+            # reap by profile rather than trusting the handle. Leaking these is what
+            # filled a window with about:blank tabs.
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(sweep_orphans)
+        if had_proc:
+            # Chrome releases its user-data-dir lock a moment after the process goes.
+            # Relaunching into it too early gives "Chrome cannot read and write to its
+            # data directory" and a browser that is alive but useless - which then
+            # fails every later call in a way that looks like a site problem.
+            await asyncio.sleep(1.5)
         await self._shutdown_pw()
 
     async def close(self) -> None:
@@ -402,6 +505,12 @@ class Session:
                     await asyncio.sleep(30)
                     if self._ctx is None:
                         return
+                    if self._inflight:
+                        # Idle means idle. A flight search holds one page for up to a
+                        # minute and touches nothing while it does; reaping under it
+                        # closed the browser mid-search.
+                        self._touch()
+                        continue
                     if time.time() - self._last_used > self.cfg.idle_timeout_s:
                         await self.close()
                         return
@@ -420,6 +529,7 @@ class Session:
             "running": self._ctx is not None,
             "warm": self._warm,
             "headless": self.cfg.headless,
+            "cdp": self._browser is not None,
             "user_agent": self.ua,
             "profile_dir": str(C.PROFILE_DIR),
         }

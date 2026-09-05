@@ -117,11 +117,14 @@ async def _t2_get(url: str, wait_for: str | None, timeout: float,
         resp = await page.goto(url, wait_until=wait_for or "load", timeout=timeout * 1000)
         if resp is None:
             raise Transport("The page did not respond.")
-        await page.wait_for_load_state("networkidle")
+        # Best effort. A page that never goes quiet (ads, polling) must not fail a
+        # fetch whose content is already there - the validator decides that.
+        with contextlib.suppress(Exception):
+            await page.wait_for_load_state("networkidle", timeout=15_000)
         return resp.status, await page.content()
 
 
-async def _evaluate_retrying(page, script: str, arg: Any, attempts: int = 3):
+async def _evaluate_retrying(page, script: str, arg: Any, attempts: int = 4):
     """page.evaluate, retried across the homepage's periodic self-navigation.
 
     The MMT homepage re-navigates itself every few seconds (Akamai sensor). An
@@ -145,18 +148,23 @@ async def _evaluate_retrying(page, script: str, arg: Any, attempts: int = 3):
 
 async def _t2_post(url: str, body: dict, headers: dict[str, str],
                    timeout: float) -> tuple[int, str]:
-    """POST via in-page fetch() with fresh clearance.
+    """POST via in-page fetch() from a page allowed to make it.
 
-    The browser's JS engine + live cookie jar bypass the Akamai sensor checks
-    that reject T1/ctx.request POST calls from this environment. Cookies are
-    cleared first so the navigation to the MMT homepage obtains fresh
-    clearance untainted by any stale _abck tokens from the persistent profile.
+    The browser's JS engine and live cookie jar get past the Akamai sensor checks
+    that reject a T1/ctx.request POST - still true on a self-launched Chrome, where
+    ctx.request.post returns the six-byte "200-OK" stub (re-measured 2026-09-05).
+
+    Two details are load-bearing and were both found the hard way: the page must be
+    a hotel *listing* page (see C.HOTEL_API_CONTEXT), and its cookies must be left
+    alone.
     """
     async with SESSION.page() as page:
-        await page.context.clear_cookies()
-        await page.goto(C.HOME, wait_until="domcontentloaded", timeout=timeout * 1000)
-        # The homepage finishes with a client-side navigation. Evaluating across it
-        # destroys the execution context mid-fetch, so let it settle first.
+        # Cookies are deliberately NOT cleared. The original T2-POST recipe cleared
+        # them to get "fresh clearance", but measured 2026-09-05 that is exactly what
+        # breaks the call now: cleared, the fetch dies as "TypeError: Failed to fetch";
+        # left alone, it returns the full payload.
+        await page.goto(C.HOTEL_API_CONTEXT, wait_until="domcontentloaded",
+                        timeout=timeout * 1000)
         with contextlib.suppress(Exception):
             await page.wait_for_load_state("load", timeout=15_000)
         await page.wait_for_timeout(1500)
@@ -352,10 +360,15 @@ async def get_text(url: str, *, ec: str, headers: dict[str, str] | None = None,
 async def post_json(url: str, body: dict, *, ec: str,
                     headers: dict[str, str] | None = None, timeout: float = 45.0,
                     fresh: bool = False, cache_ttl: float = PRICE_TTL,
+                    cache_id: str | None = None,
                     validate: Callable[[dict], bool] | None = None) -> FetchResult:
     """JSON POST (the hotel search API). `validate` gates caching exactly as in get_text:
-    return False, or raise an MMTError to name the specific failure kind."""
-    ck = cache_key("POST:" + ec, {"url": url, "body": body})
+    return False, or raise an MMTError to name the specific failure kind.
+
+    `cache_id` exists because the body is not a usable cache key: it carries a fresh
+    requestId per call, so keying on it gave every search its own entry and the cache
+    never hit. Callers pass a key built from what the search actually means."""
+    ck = cache_id or cache_key("POST:" + ec, {"url": url, "body": body})
     if not fresh:
         hit = CACHE.get(ck)
         if hit is not None:

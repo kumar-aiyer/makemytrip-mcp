@@ -152,40 +152,94 @@ One block per bug. Copy the block, fill it in, keep it - it survives across sess
 - **Fix:** commit pending - `in_window` raises BadInput naming the value it got.
 - **Regression test added?:** yes - `test_train_bad_date`, covering both entry points.
 
+### BUG-11 (CLOSED): the hotel price cache never hit
+
+- **Found:** 2026-09-05 (Phase 1 close, by the probe's cache gate)
+- **Call:** any repeated `mmt_hotel_search` with identical arguments
+- **Expected:** a cached answer in well under a second
+- **Actual:** a full ~5 s round trip every time. The 20-minute price cache the design
+  promises had never worked for hotels.
+- **kind:** none - correct answers, silently paid for twice
+- **Root cause:** `post_json` keyed the cache on the request body, and `build_body` stamps a
+  fresh `uuid4` as `requestId` on every call. Every search therefore had a unique key.
+- **Fix:** `post_json` takes a `cache_id`; `hotels.search` passes a key built from what the
+  search *means* (city, dates, occupancy, limit, filters).
+- **Regression test added?:** covered by probe G9, which is what caught it.
+
+### BUG-12 (CLOSED): the hotel detail page had no validator, so the stub was "success"
+
+- **Found:** 2026-09-05 (Phase 1 close)
+- **Call:** `mmt_hotel_rates(hotel_id=..., city="Kochi", ...)`
+- **Expected:** room-level rate plans
+- **Actual:** `shape_drift` reporting `tier_used: 1` - the giveaway. The 169-byte Akamai
+  stub was a *successful* tier-1 fetch as far as the router was concerned, so it never
+  escalated to the tier that works, and the stub was cached for 20 minutes on the way past.
+  The domain layer raised ShapeDrift afterwards, far too late to matter.
+- **kind:** shape_drift, raised in the wrong layer
+- **Root cause:** every other page fetch passes a `validate` callback; this one did not.
+- **Fix:** `hotels.detail_valid` (requires `__INITIAL_STATE__`) passed to `get_text`, plus
+  `funnel_url` so the escalated attempt arrives via a listing page. Two related fixes fell
+  out: the detail page waits for `domcontentloaded` rather than `networkidle` (the state is
+  server-rendered and the page never goes quiet inside 45 s), and `_t2_get`'s networkidle
+  wait is now best-effort so a chattering page cannot fail a fetch whose content is present.
+- **Verified live:** 15 rate plans, base + tax == all_in.
+- **Regression test added?:** covered by probe G3.
+
+
 ---
 
-## Run 2026-09-04 - Phase 1 close
+## Run 2026-09-05 - Phase 1 close
 
-All Phase 1 gates green. Every bug logged above is closed; BUG-8, BUG-9 and BUG-10 were
-found *by* this run.
+All Phase 1 gates green. Every bug logged above is closed; BUG-8 through BUG-12 were found
+*by* this run, four of them only because closing the first two forced the browser layer to be
+re-examined.
 
 | Gate | Result |
 |---|---|
 | Offline suite | 112/112, no network, no browser (was 78) |
 | `mmt_setup_status` | ready, headless false, `chrome.exe (self-launched, CDP)` |
 | Hotels Goa 6N | tier 2, base + tax == all_in on every row |
-| Trains SBC-MAO in window | tier 1, 6 trains with live fares and waitlist |
+| Hotel rate plans (Kochi) | tier 2, 15 plans, arithmetic clean |
+| `mmt_price_itinerary` | server-side total == sum of legs |
+| Trains SBC-MAO in window | tier 1, live fares and waitlist |
 | Trains Dec 15 (101 days out) | `not_in_window`, booking_opens 2026-10-16 |
 | `station_city` SBC/MAO | CTBLR / CTGOI |
 | Cabs Bengaluru-Goa | tier 2, 10 cabs, 603 km, cheapest 12,161 all-in |
+| Cabs Kochi-Rameswaram | 9 cabs at +45d, 438 km |
 | Flights BLR-GOI | tier 2, 25 itineraries, cheapest nonstop into GOI 4,367 |
-| `mmt_selftest` (full) | 5/5; hotel_api, train_page, cab_page all healthy |
+| `mmt_selftest` (full) | 5/5 |
 | Error taxonomy | bad_input / unregistered_place / not_in_window all correct after BUG-10 |
+| `tools/probe.py` | **Core hotel pricing: USABLE** |
 
-Latency: hotel search 7-27 s (tier 2), trains 0.4-4 s (tier 1), station_city ~16 s cold,
-cabs ~13 s (tier 2, includes the funnel visit), flights 28-60 s (drives a real page).
+Latency: hotel search 5-27 s (tier 2), cached repeat < 0.01 s once BUG-11 was fixed, trains
+0.4-4 s (tier 1), station_city ~16 s cold, cabs ~13-20 s (tier 2, includes the funnel visit),
+flights 28-60 s (drives a real page).
 
-The two structural findings worth carrying forward:
+### The four structural findings worth carrying forward
 
-1. **A browser Playwright *starts* is treated differently from the same binary started as
-   an ordinary process and attached to over CDP.** This, not headers and not cookies, was
-   what stood between the server and both the cabs listing and the flight results page.
-   The profile does not matter (a fresh one fails the same way); the launcher does.
-2. **Deep links into results routes need the funnel page first.** `/cabs/listing` and
-   `/flight/search` are stubbed when arrived at cold, and render in full when the funnel
-   page (`/cabs/`, `/flights/`) was loaded in the same page first. `/railways/listing` is
-   not fussy, which is why trains worked all along and hid the pattern.
+1. **A browser Playwright *starts* is treated differently from the same binary started as an
+   ordinary process and attached to over CDP.** This, not headers and not cookies, was what
+   stood between the server and the cabs listing, the flight results page *and* the hotel
+   detail page. The profile is irrelevant - a fresh one fails identically.
+2. **Deep links into results routes need their funnel page first**, loaded in the same tab.
+   `/railways/listing` is the exception, which is why trains worked all along and hid the
+   pattern for two bugs.
+3. **Owning the Chrome process has its own hazards**, and all of them bit during this run: a
+   self-launched Chrome quits when its last tab closes; a launch against a locked profile
+   hands its startup URL to the running instance and exits 0, which reads as "Chrome died"
+   and on retry fills a window with about:blank tabs; a relative `--user-data-dir` is refused
+   outright; and the idle reaper will close a browser under the one call long enough to look
+   idle. Each is guarded now.
+4. **An unvalidated fetch is worse than a failing one.** BUG-12's stub counted as a tier-1
+   success, so the router never tried the tier that works and cached the stub on the way
+   past. `tier_used: 1` on a shape_drift is the tell.
 
-Carried into Phase 2, not bugs: the train parser emits some junk class rows (`class: null,
-quota "LD", fare 0`) alongside the real ones, and `prettyPrint` no longer arrives so
-`status_pretty` is null throughout. Neither corrupts a real fare.
+Two earlier claims in these docs were **wrong and are corrected**: `ctx.request` was never
+able to complete a flight search (re-measured on a self-launched Chrome, its POST is still
+the six-byte stub), and clearing cookies before the hotel POST - the original BUG-3 recipe -
+now breaks the call rather than helping it.
+
+Carried into Phase 2, not bugs: the train parser emits some junk class rows (`class: null`,
+quota "LD", fare 0) alongside the real ones, and `prettyPrint` no longer arrives so
+`status_pretty` is null throughout. Neither corrupts a real fare. Cab quotes ~200 days out
+return a fully rendered page with genuinely zero cabs - a real empty, not a block.

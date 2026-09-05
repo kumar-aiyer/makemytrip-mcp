@@ -13,7 +13,12 @@ from typing import Any
 
 # ---------------------------------------------------------------- paths and identity
 
-STATE_DIR = Path(os.environ.get("MMT_MCP_HOME", Path.home() / ".makemytrip-mcp"))
+# Resolved, always. A relative MMT_MCP_HOME (".state") is a reasonable thing to
+# configure, and Playwright would resolve it for us - but Chrome, launched as its own
+# process, refuses a relative --user-data-dir with "Failed to create data directory"
+# and then starts anyway, browsing nothing.
+STATE_DIR = Path(os.environ.get("MMT_MCP_HOME",
+                                Path.home() / ".makemytrip-mcp")).expanduser().resolve()
 PROFILE_DIR = STATE_DIR / "chrome-profile"
 DIAG_DIR = STATE_DIR / "diagnostics"
 DATA_FILE = STATE_DIR / "data.json"
@@ -33,6 +38,14 @@ GET_LOCUS = f"{RAILWAYS}/api/mobile/search/getLocusId"
 CAB_LISTING = f"{WWW}/cabs/listing"
 CAB_HOME = f"{WWW}/cabs/"
 HOME = f"{WWW}/?cc=IN&lang=eng"
+
+# The page the hotel-API POST is issued from. It must be a hotel *listing* page:
+# measured 2026-09-05, the /hotels/ funnel refuses the fetch to mapi outright
+# ("TypeError: Failed to fetch" - its CSP does not allow the connection) and the
+# homepage re-navigates itself under the call. Which city the page is for does not
+# matter - the search is driven entirely by the POST body, and a Kochi query issued
+# from this page returns Kochi results. It is a permitted origin, nothing more.
+HOTEL_API_CONTEXT = f"{WWW}/hotels/hotels-in-goa.html"
 
 # Flights API header contract - captured from the site's own XHR (2026-09-05).
 # search-stream-dt rejects the call with a 403 JSON naming each missing header

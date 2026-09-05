@@ -47,6 +47,23 @@ Body — the meaningful fields (complete literal in `mmt/hotels.py::build_body`)
   property. (`locationType:"hotel"` returns nothing; `selectiveHotelIds` is ignored.)
 - `filterCriteria` — e.g. `[{"filterGroup":"STAR_RATING","filterValue":"5","isRangeFilter":false}]`
 
+> ### Issuing the POST at all
+> `ctx.request.post` returns a six-byte body reading `200-OK` - re-measured 2026-09-05 on a
+> self-launched Chrome, so this is not a Playwright artefact. The call has to be made as an
+> in-page `fetch()` from a page allowed to make it, and "allowed" is narrow:
+>
+> | Page the fetch runs from | Result |
+> |---|---|
+> | `hotels-in-<city>.html` (any city) | **works** - 246 KB of real JSON |
+> | `/hotels/` funnel | `TypeError: Failed to fetch` - CSP forbids the connection |
+> | homepage | the page re-navigates under the call, killing the execution context |
+>
+> Which city's listing page is irrelevant: the search is driven entirely by the body, and a
+> Kochi query issued from the Goa listing page returns Kochi results.
+>
+> **Do not clear cookies first.** An earlier recipe here did, to get "fresh clearance". That
+> now breaks the call outright (`TypeError: Failed to fetch`); left alone, it succeeds.
+
 > ### The silent-null trap
 > With a trimmed `expData` string or `featureFlags` block the call still returns **HTTP 200
 > and the correct hotels, with every `priceDetail` null**. Both must be sent complete. A test
@@ -73,6 +90,9 @@ response.cityLocationDetail        <- empty means the city code was wrong
 
 `price` is base, `totalTax` is tax, `priceWithTax` is all-in. **Stay totals for the whole
 range and room count — not per night.**
+
+The body carries a fresh `requestId` (a uuid) per call, so it is **not** a usable cache key —
+keying on it gives every search its own entry and the cache never hits.
 
 A wrong city code returns a valid-looking empty response, never an error.
 
@@ -322,9 +342,10 @@ Response — typed cards in the stream:
 `basePrice + miscCharges = totalAmount`; `perKmExtraCharge` applies beyond the included
 distance. Distance and duration parse out of `summaryText`.
 
-**No booking window.** The ~60-day limit users see is the website's date picker, not the
-endpoint — dates months out quote fine, typically at a seasonal premium with fewer vendors
-bidding. No cab location autosuggest exists at the paths one would guess (`/locations/autosuggest/`,
+**No booking window,** but not unlimited either. The ~60-day limit users see is the website's
+date picker, not the endpoint. Measured 2026-09-05 on Kochi–Rameswaram: **+45 days returns
+nine cabs, +120 days works, +200 days renders a full page with genuinely zero cabs** and no
+distance. Far out is a real empty result, not a block — vendors simply stop bidding. No cab location autosuggest exists at the paths one would guess (`/locations/autosuggest/`,
 `/locations/search/` both 404) — the real one is
 `cabs.makemytrip.com/autocomplete/v3?query=…&requestFor=from|to`, and
 `cabs.makemytrip.com/fetchLocation/v3?place_id=…` returns the full object for a place the

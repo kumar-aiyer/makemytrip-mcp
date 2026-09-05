@@ -9,6 +9,7 @@ connection. Datacenter IPs are refused by MakeMyTrip's CDN with HTTP 403.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import pathlib
 import sys
 from datetime import date, timedelta
@@ -46,7 +47,10 @@ async def main() -> int:
     soon_in = (today + timedelta(days=30)).isoformat()
     soon_out = (today + timedelta(days=32)).isoformat()
     train_day = (today + timedelta(days=30)).isoformat()
-    far_day = (today + timedelta(days=200)).isoformat()
+    # Far out, but not absurdly: measured 2026-09-04, a +200d Kochi-Rameswaram search
+    # renders a full page with genuinely zero cabs, while +45d returns nine. There is
+    # no booking window on this endpoint, but vendors do stop bidding eventually.
+    far_day = (today + timedelta(days=120)).isoformat()
 
     results: dict[str, bool] = {}
 
@@ -95,16 +99,22 @@ async def main() -> int:
             hotel_id="201211061904322411", city="Kochi", check_in=soon_in,
             check_out=soon_out, fresh=True), v_rates)
 
-    line("G4  flights (experimental - the parser may need the fixture)")
+    line("G4  flights (slow - drives the site's own search page)")
     def v_fl(r):
         for it in (r.get("itineraries") or [])[:4]:
+            alt = "  [other airport]" if it.get("alternate_airport") else ""
             print(f"     {it['airline']} {it['flight_no']} {it['depart']} -> "
-                  f"{it['arrive']}  {it['fare_inr']}")
+                  f"{it['arrive']}  {it['from']}-{it['to']}  "
+                  f"base {it['base_inr']} + tax {it['tax_inr']} = "
+                  f"{it['all_in_inr']}{alt}")
         if not r.get("itineraries"):
-            print("     stream returned "
-                  f"{r.get('raw_len')} bytes but nothing parsed - save raw_head to "
-                  "tests/fixtures/flight_stream.json and rewrite parse_stream")
-        return bool(r.get("itineraries")), f"{r.get('parsed_count')} parsed"
+            print(f"     stream returned {r.get('raw_len')} bytes but nothing parsed - "
+                  "if that is near zero the results page was stubbed (funnel-first "
+                  "rule, see RUNBOOK); if it is large, re-derive parse_stream")
+        bad = [it for it in (r.get("itineraries") or [])
+               if it["base_inr"] is not None and it["tax_inr"] is not None
+               and round(it["base_inr"] + it["tax_inr"], 2) != round(it["all_in_inr"], 2)]
+        return bool(r.get("itineraries")) and not bad, f"{r.get('parsed_count')} parsed"
     results["flights"] = await gate(
         "flight search", T.TOOLS["mmt_flight_search"]["fn"](
             origin="BLR", dest="IXE", date=soon_in, fresh=True), v_fl)
@@ -165,5 +175,15 @@ async def main() -> int:
     return 0 if core else 1
 
 
+async def _guarded() -> int:
+    try:
+        return await main()
+    finally:
+        # Always reap the browser. A gate that raises must not leave Chrome holding
+        # the profile - the next launch would be handed off to it and exit.
+        with contextlib.suppress(Exception):
+            await SESSION.close()
+
+
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    raise SystemExit(asyncio.run(_guarded()))

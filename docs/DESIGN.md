@@ -28,10 +28,12 @@ Live findings refined the tier story (2026-09-04/05):
 
 - **Hotel API POST** (`mapi.search-hotels`): `ctx.request.post` returns an Akamai stub
   `"200-OK"` body from a residential IP, and the site is a genuine key-value API where a
-  navigation makes no sense. `post_json` therefore escalates to a **T2-POST** path:
-  `clear_cookies()` → `goto(HOME)` → in-page `fetch(url, {method:'POST', credentials:'include'})`
-  with the browser-managed headers stripped (User-Agent etc. are forbidden in `fetch`). This is
-  the only hotel path that works from this network, and it is now the ceiling for `HOTEL_API`.
+  navigation makes no sense. `post_json` therefore escalates to a **T2-POST** path: navigate a
+  hotel *listing* page, then in-page `fetch(url, {method:'POST', credentials:'include'})` with
+  the browser-managed headers stripped (User-Agent etc. are forbidden in `fetch`). Both halves
+  are narrow and were found the hard way: the `/hotels/` funnel refuses the fetch by CSP and the
+  homepage re-navigates under it, and clearing cookies first — which the original recipe did —
+  now breaks the call rather than helping it.
 - **Flights API GET** (`flights-cb/search-stream-dt`): still cannot be called directly, and
   the server no longer tries. The API requires a session-generated `authorization` token and
   a header set (see the contract in `mmt/config.py`) that only a real user session gets past.
@@ -126,10 +128,18 @@ lookups, never persisted to disk — a stale rupee figure resurrected three days
 than a slow call. Every result carries `cached` and `fetched_at`, so any number presented to
 a user can be dated. `fresh: true` bypasses.
 
+Keys come from what a call *means*, not from its request body: the hotel body carries a fresh
+`requestId` per call, and keying on that gave every search a unique entry and a cache that
+never hit (BUG-11).
+
 A response is cached **only after the caller's parser validates it**: a silent HTTP 200 whose
 body has no usable prices (the `null_prices` trap) is a failure and is never cached, so the bad
 body cannot be resurrected for 20 minutes. Whole-HTML pages (train/cab listings) are held under
 a byte budget so a cache full of pages cannot balloon into hundreds of MB resident.
+
+The validator is also what lets the **router** do its job: a fetch with no validator counts a
+bot stub as success, so the tier that would have worked is never tried and the stub is cached
+(BUG-12). Every page fetch passes one.
 
 ## Layering
 
