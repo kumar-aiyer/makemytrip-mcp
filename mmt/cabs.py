@@ -95,6 +95,23 @@ def place_from_url(url: str) -> dict[str, dict[str, Any]]:
     return out
 
 
+def place_label(place: dict[str, Any]) -> str:
+    """A human name for a place object.
+
+    Harvested objects carry main_text/address but no `city` - the site fills that
+    in from its own fetchLocation call - so reading `city` alone renders a route as
+    "None -> None".
+    """
+    for key in ("city", "main_text"):
+        val = place.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    addr = place.get("address")
+    if isinstance(addr, str) and addr.strip():
+        return addr.split(",")[0].strip()
+    return "unknown"
+
+
 def listing_url(origin: dict, dest: dict, iso_date: str, *, pickup_time: str = "10:00",
                 trip_type: str = "OW", return_date: str = "") -> str:
     try:
@@ -127,10 +144,11 @@ async def search(origin: str | dict, dest: str | dict, iso_date: str, *,
     if trip_type == "RT" and not return_date:
         raise BadInput("trip_type RT requires a return_date.")
 
+    # funnel_url: /cabs/listing is Akamai-stubbed for a browser that arrives cold.
     res = await get_text(url, ec=CAB_PAGE, wait_for="networkidle", fresh=fresh,
-                         validate=body_valid)
+                         funnel_url=C.CAB_HOME, validate=body_valid)
     out = parse(res.text, url=url, iso_date=iso_date,
-                route=f"{o.get('city')} -> {d.get('city')}")
+                route=f"{place_label(o)} -> {place_label(d)}")
     if not out["cab_count"]:
         raise EmptyValid(
             f"No cabs offered for {out['route']} on {iso_date}.",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import random
 import time
@@ -97,14 +98,49 @@ async def _t1_post(url: str, body: dict, headers: dict[str, str],
         return r.status, await r.text()
 
 
-async def _t2_get(url: str, wait_for: str | None, timeout: float) -> tuple[int, str]:
-    """Full page render - solves bot interstitials but pays for rendering."""
+async def _t2_get(url: str, wait_for: str | None, timeout: float,
+                  funnel_url: str | None = None) -> tuple[int, str]:
+    """Full page render - solves bot interstitials but pays for rendering.
+
+    `funnel_url`, when given, is loaded first in the same page. Akamai serves the
+    169-byte "200-OK" stub instead of /cabs/listing to a browser that arrives there
+    cold; visiting the funnel page (/cabs/) first establishes the sensor and referer
+    chain a real user would have, and the listing then renders in full. Verified
+    2026-09-04: cold -> stub, funnel-first -> 10 cab cards.
+    """
     async with SESSION.page() as page:
+        if funnel_url:
+            with contextlib.suppress(Exception):
+                await page.goto(funnel_url, wait_until="domcontentloaded",
+                                timeout=timeout * 1000)
+                await page.wait_for_timeout(6000)
         resp = await page.goto(url, wait_until=wait_for or "load", timeout=timeout * 1000)
         if resp is None:
             raise Transport("The page did not respond.")
         await page.wait_for_load_state("networkidle")
         return resp.status, await page.content()
+
+
+async def _evaluate_retrying(page, script: str, arg: Any, attempts: int = 3):
+    """page.evaluate, retried across the homepage's periodic self-navigation.
+
+    The MMT homepage re-navigates itself every few seconds (Akamai sensor). An
+    evaluate that lands on one of those moments dies with "Execution context was
+    destroyed" - a timing accident, not a refusal, so retry rather than escalate.
+    """
+    last: Exception | None = None
+    for i in range(attempts):
+        try:
+            return await page.evaluate(script, arg)
+        except Exception as e:
+            if "Execution context was destroyed" not in str(e):
+                raise
+            last = e
+            with contextlib.suppress(Exception):
+                await page.wait_for_timeout(1500 * (i + 1))
+    raise Transport(f"In-page fetch could not run: {last}",
+                    hint="The page kept navigating under the call. Retrying usually "
+                         "clears it.")
 
 
 async def _t2_post(url: str, body: dict, headers: dict[str, str],
@@ -119,11 +155,16 @@ async def _t2_post(url: str, body: dict, headers: dict[str, str],
     async with SESSION.page() as page:
         await page.context.clear_cookies()
         await page.goto(C.HOME, wait_until="domcontentloaded", timeout=timeout * 1000)
+        # The homepage finishes with a client-side navigation. Evaluating across it
+        # destroys the execution context mid-fetch, so let it settle first.
+        with contextlib.suppress(Exception):
+            await page.wait_for_load_state("load", timeout=15_000)
+        await page.wait_for_timeout(1500)
         safe = {k: v for k, v in headers.items()
                 if k.lower() not in ('user-agent', 'accept-encoding', 'connection',
                                      'cookie', 'cookie2', 'origin', 'referer',
                                      'host', 'via', 'upgrade')}
-        res = await page.evaluate("""async ({url, body, headers}) => {
+        res = await _evaluate_retrying(page, """async ({url, body, headers}) => {
             try {
                 const r = await fetch(url, {
                     method: 'POST',
@@ -221,6 +262,7 @@ async def get_text(url: str, *, ec: str, headers: dict[str, str] | None = None,
                    wait_for: str | None = None, timeout: float = 45.0,
                    fresh: bool = False, cache_ttl: float = PRICE_TTL,
                    cache_id: str | None = None, context_url: str | None = None,
+                   funnel_url: str | None = None,
                    validate: Callable[[str], bool] | None = None) -> FetchResult:
     """GET with caching. `validate`, when given, runs on the body before caching:
     a silent-200 body that fails the caller's check is never cached (F3). A validator
@@ -253,7 +295,7 @@ async def get_text(url: str, *, ec: str, headers: dict[str, str] | None = None,
                 # (in-page XHR) rather than navigating to the API URL directly.
                 status, text = await _t2_fetch_get(url, hdrs, timeout, context_url)
             else:
-                status, text = await _t2_get(url, wait_for, timeout)
+                status, text = await _t2_get(url, wait_for, timeout, funnel_url)
 
             if _looks_blocked(status, text):
                 raise Blocked(f"MakeMyTrip refused the request (HTTP {status}) at "
