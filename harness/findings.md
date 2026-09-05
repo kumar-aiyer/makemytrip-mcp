@@ -583,3 +583,75 @@ every artifact it produces should be written where it works.
 Two process lessons, both cheap: a subject model must be a reasoning model (Flash-class was
 the wrong instrument), and the transcript must be checked for content at export time rather
 than trusted.
+
+---
+
+## Run 2026-09-05 — Phase 2 acceptance, subject Sonnet-5: **passes everything but H6**
+
+Full audit in `harness/runs/2026-09-05-acceptance-2/run-log.md`. Subject ran in
+`mmt-acceptance-workspace`, outside this repo — the fix for the void run's contamination,
+and it worked: nothing in the deliverable resembles a previous run.
+
+Deliverable is a 13-page PDF built by a 36 KB script, with two costed plans. Re-summing the
+item lists independently reproduces both totals exactly — Comfort 146,942 + 4% = **152,820**,
+Value 104,398 + 4% = **108,574** — because the subject computed them in code rather than by
+hand. **H-ARITH passes for the first time.**
+
+Three gates are worth calling out:
+
+- **BUG-16's rule held.** Hotels are `3 x 5,985 = 17,955` and `4 x 15,340 = 61,360`, tagged
+  "per night". The first subject to get the per-night unit right, and the first to run
+  against a `mmt_capabilities` that states it. The fix and the disclosure did their job.
+- **H5 was exemplary.** It excluded GOX/SDW from the table and footnoted the cheapest fare
+  it saw — FLY91 at ₹3,099 into Sindhudurg — with the reason it was rejected. The
+  `known_gaps` entry is carrying real weight.
+- **H4 was better than asked.** It named the 8hr/80km package gap as "a documented gap in
+  this MCP", priced a scooter substitute, and derived a day charter from an MCP leg under a
+  `CALC` tag it defined in a source key.
+
+Corroboration the calls were live, since the transcript cannot supply it: the outbound leg
+reads `IndiGo 6E 6554, 19:00->20:20, ₹3,222 + ₹1,145 = ₹4,367` — **identical to this
+project's own independent measurement that morning**, down to the base/tax split.
+
+### BUG-17 (new): `mmt_cab_find_place` registers the first autocomplete hit, silently
+
+The run harvested five places. Look at what they are:
+
+| registered as | actually | `is_city` |
+|---|---|---|
+| `southgoa` | **Bibhitaki Hostel Palolem Goa** | false |
+| `northgoa` | Goa beach | false |
+| `ponda` | Sahakar Spice Plantation Curti Ponda Roa | false |
+| `goaairport` | Dabolim Airport | false |
+| `dudhsagar` | Dudhsagar Trek | false |
+
+The subject then priced inter-base transfers between these and billed them as region-to-
+region legs. Across three runs the first hit has been a town once (`kulem`), a tour operator
+once ("Dudhsagar Waterfall Trip - Goa"), and a hostel here — a coin flip, and nothing in the
+response tells the caller the match is weak. `is_city` was `false` for all five while the
+query was a locality every time, so the signal to act on is already in hand: the tool could
+warn, return candidates, or refuse when a locality-shaped query resolves to a POI. Left as
+is, it is an unvalidated value presented as a good one — the BUG-12 family again.
+
+### The train trigger has never fired, in any run
+
+It is one of the two designed gap-recovery triggers and three subjects in a row have simply
+chosen to fly, so `not_in_window` has never been exercised by a subject. The canonical
+prompt does not ask for a rail comparison and nothing forces one. Either the prompt should
+invite a transport comparison, or the harness should retire the train window as a live
+trigger and rely on the cab-place gap, which has now fired three times out of three.
+
+### H6 is the only thing standing between this and sign-off — and it is our design flaw
+
+The Cline export is not a session transcript: 187 KB of which 98% is a single base64
+screenshot, 4.5 KB of prose, zero `mmt_*` calls. Recovery was attempted and failed — all 35
+Cline task directories were searched for the prompt's typo with no match, and the only other
+hit in VS Code's tree is a saved copy of the same file.
+
+That is three runs and three hosts-of-record failing to produce usable evidence, which is
+the tell that the gate is written wrong. **H6 makes this project's acceptance evidence
+depend on a third-party UI's export button.** The server should record its own calls: an
+append-only JSONL of tool, arguments, elapsed, tier and a result digest, alongside the
+`failures.jsonl` that today records only failures. Then H6 is satisfied from the server's
+own log, independently of the host, and the spot-check is mechanical. Until that exists,
+every future acceptance run is one export bug away from being unscoreable.
