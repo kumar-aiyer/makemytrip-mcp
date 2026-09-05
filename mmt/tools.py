@@ -16,6 +16,7 @@ from . import flights as FL
 from . import harvest as HV
 from . import hotels as HO
 from . import trains as TR
+from . import version as VS
 from .cache import CACHE
 from .errors import BadInput, EmptyValid, MMTError, NotInWindow, NullPrices
 from .fetch import gather_limited
@@ -352,6 +353,19 @@ async def mmt_cab_find_place(query: str, save_as: str = "",
 
 # ---------------------------------------------------------------- meta and health
 
+@tool("mmt_version", {"type": "object", "properties": {}, "required": []})
+async def mmt_version() -> dict:
+    """Report the exact code this server process is running.
+
+    Returns the git commit the running process was loaded from, its code path and
+    uptime. The commit is captured at process start, so this describes the code in
+    memory, not the newer state on disk. If `loaded_at_commit` does not match the
+    repository checkout you are working from, this is a stale server process -
+    restart or re-register it before trusting any other tool result.
+    """
+    return VS.get_version()
+
+
 @tool("mmt_capabilities", {"type": "object", "properties": {}, "required": []})
 async def mmt_capabilities() -> dict:
     """What this server can and cannot price, and why. Worth calling before planning.
@@ -360,6 +374,7 @@ async def mmt_capabilities() -> dict:
     per travel mode, known gaps, and the deliberate absence of any booking path.
     """
     return {
+        "version": VS.get_version(),
         "verified": {
             "hotel_search": "city plus dates to a priced list",
             "hotel_rates": "one property to every room and rate plan",
@@ -434,6 +449,7 @@ async def mmt_setup_status() -> dict:
         except MMTError as e:
             warm = e.to_result()
     return {"ready": bool(ok and warm and warm.get("ok")), **status,
+            "version": VS.get_version(),
             "warmup": warm, "next_steps": steps if not (ok and warm) else [],
             "state_dir": str(C.STATE_DIR)}
 
