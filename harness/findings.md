@@ -243,3 +243,22 @@ Carried into Phase 2, not bugs: the train parser emits some junk class rows (`cl
 quota "LD", fare 0) alongside the real ones, and `prettyPrint` no longer arrives so
 `status_pretty` is null throughout. Neither corrupts a real fare. Cab quotes ~200 days out
 return a fully rendered page with genuinely zero cabs - a real empty, not a block.
+
+---
+
+## Run 2026-09-05 - dev infra: mmt_version, watcher supervisor, handshake-race fix
+
+Out-of-band work so the Phase 2 acceptance run can trust the code it talks to. All of it is
+new tooling around the server, not a change to `mmt/` server behaviour; no server BUG logged.
+
+| Item | Result |
+|---|---|
+| `mmt_version` tool + `.clinerules` sync rule | `loaded_at_commit` == HEAD verified live; **stale-server trap confirmed** - the pre-BUG-7 build answered `mmt_capabilities` with `flight_search` under `experimental` weeks after the parser shipped |
+| `tools/watch_server.py` supervisor | Host launches the watcher; it owns `server.py` as a child, reloads it on source change and after a crash, relays MCP verbatim (line-framed, binary). Tests `test_watch_server.py` 33/33 offline |
+| Handshake-race fix | The host sends `initialize` immediately - the watcher's feed thread started before the child spawn and dropped the frame, so Cline timed out at 60 s (`-32001`). Frames now buffer and replay once a child is up; deterministic regression test (1.5 s child delay) times out against a no-buffer copy and answers against the fix |
+| Live dev-loop proof | Touched `mmt/tools.py` while Cline was connected: child PID changed, `mmt_version` over the SAME connection flipped `loaded_dirty` true, then false on revert. No reconnect involved |
+| Interface caveat held | New tools (e.g. `mmt_version`) still need one host reconnect to appear: the host snapshots `tools/list` at connect and nothing in-session re-fetches it |
+
+Carried forward for Phase 2: the pre-flight should call `mmt_version` first and compare
+`loaded_at_commit` against `git rev-parse HEAD` before trusting any live result - the stale
+build that motivated this is exactly the silent failure the acceptance run must not measure.
