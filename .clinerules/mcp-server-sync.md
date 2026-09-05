@@ -30,3 +30,19 @@ server whose `loaded_at_commit` does not match the checkout. Restart, re-registe
 
 `mmt_version` is the dedicated tool, and the same `version` record is embedded in
 `mmt_capabilities` and `mmt_setup_status`, so no single call is the only place to read it.
+
+## When the server runs under the watcher (tools/watch_server.py)
+
+The supervisor keeps the *host* connection alive across child restarts, so the two cases
+collapse differently:
+
+- **Code-only changes** (fixing logic behind an existing tool, editing internals): the
+  watcher reloads the child automatically. No user action needed — verify with
+  `mmt_version`, whose `loaded_at_commit` updates to the new code.
+- **Interface changes** (new/renamed tools, schema edits, config/args/env changes): still
+  need **one** reconnect — the host snapshots `tools/list` at connect and nothing in the
+  session forces a re-fetch. Do not claim a new tool is available until a reconnect has
+  happened and `mmt_version` at that new process matches the checkout.
+
+Rule of thumb: **a changed behavior you can smoke-test via an existing tool needs no
+reconnect; a changed tool surface always does.**
