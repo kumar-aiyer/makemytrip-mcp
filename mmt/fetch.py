@@ -107,6 +107,41 @@ async def _t2_get(url: str, wait_for: str | None, timeout: float) -> tuple[int, 
         return resp.status, await page.content()
 
 
+async def _t2_post(url: str, body: dict, headers: dict[str, str],
+                   timeout: float) -> tuple[int, str]:
+    """POST via in-page fetch() with fresh clearance.
+
+    The browser's JS engine + live cookie jar bypass the Akamai sensor checks
+    that reject T1/ctx.request POST calls from this environment. Cookies are
+    cleared first so the navigation to the MMT homepage obtains fresh
+    clearance untainted by any stale _abck tokens from the persistent profile.
+    """
+    async with SESSION.page() as page:
+        await page.context.clear_cookies()
+        await page.goto(C.HOME, wait_until="domcontentloaded", timeout=timeout * 1000)
+        safe = {k: v for k, v in headers.items()
+                if k.lower() not in ('user-agent', 'accept-encoding', 'connection',
+                                     'cookie', 'cookie2', 'origin', 'referer',
+                                     'host', 'via', 'upgrade')}
+        res = await page.evaluate("""async ({url, body, headers}) => {
+            try {
+                const r = await fetch(url, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify(body),
+                    credentials: 'include'
+                });
+                return {status: r.status, text: await r.text()};
+            } catch(e) {
+                return {error: e.toString()};
+            }
+        }""", {"url": url, "body": body, "headers": safe})
+        if "error" in res:
+            raise Transport(f"In-page POST fetch failed: {res['error']}",
+                            hint="The browser may have been reaped, or the request was blocked.")
+        return res["status"], res["text"]
+
+
 # --------------------------------------------------------------------- public fetch
 
 _LAST_BLOCKED: dict[str, float] = {}
@@ -253,14 +288,16 @@ async def post_json(url: str, body: dict, *, ec: str,
     attempts: list[str] = []
     for tier in plan:
         if tier == Tier.PAGE:
-            tier = Tier.REQUEST      # no page-render path for a POST API
+            pass  # _t2_post handles this below
         t0 = time.time()
         try:
             hdrs = headers or C.hotel_headers(SESSION.ua)
             if tier == Tier.HTTP:
                 status, text = await asyncio.to_thread(_t0_post, url, body, hdrs, timeout)
-            else:
+            elif tier == Tier.REQUEST:
                 status, text = await _t1_post(url, body, hdrs, timeout)
+            else:
+                status, text = await _t2_post(url, body, hdrs, timeout)
 
             if _looks_blocked(status, text):
                 raise Blocked(f"MakeMyTrip refused the request (HTTP {status}).",

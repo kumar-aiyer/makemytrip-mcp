@@ -32,9 +32,9 @@ UI_DRIVE = "ui_drive"
 # POST APIs (HOTEL_API) is the request tier: a POST has no page-load path, so "escalate
 # to a render" must not be advertised for it - that would only re-run the identical tier.
 PREFERRED: dict[str, tuple[Tier, Tier]] = {
-    HOTEL_API:  (Tier.HTTP, Tier.REQUEST),
+    HOTEL_API:  (Tier.HTTP, Tier.PAGE),
     HOTEL_PAGE: (Tier.REQUEST, Tier.PAGE),
-    FLIGHT_API: (Tier.REQUEST, Tier.REQUEST),
+    FLIGHT_API: (Tier.REQUEST, Tier.PAGE),
     TRAIN_PAGE: (Tier.REQUEST, Tier.PAGE),
     CAB_PAGE:   (Tier.REQUEST, Tier.PAGE),
     UI_DRIVE:   (Tier.PAGE, Tier.PAGE),
