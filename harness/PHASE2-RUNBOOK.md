@@ -4,6 +4,26 @@ What is done, what is left, and exactly how to do it. Written 2026-09-05 after t
 data-collection run (`runs/2026-09-05/`), which produced a priced itinerary and four bug
 fixes but **is not the acceptance test**.
 
+## Two sessions, two roles
+
+This is the thing to get straight before anything else. **Cline is the subject. Claude Code
+is the operator.** They are never the same session, and only one of them talks to the server
+at a time.
+
+| | **Cline** (subject) | **Claude Code** (operator) |
+|---|---|---|
+| Job | Be tested | Set up, observe, audit, fix |
+| Sees | The prompt blockquotes, and nothing else | This runbook, the checklist, everything |
+| Talks to the server via | Its own MCP registration | `harness/mcp_client.py` |
+| When | Step 2 only | Steps 0-1, then 3-5 |
+
+They must not overlap: two `server.py` processes fight for the Chrome profile lock and both
+`.state` writers can clobber each other. So the operator finishes and **exits** before the
+subject starts, and does not touch the server again until the subject session is closed.
+
+The human does exactly three things by hand: paste the prompt into Cline, avoid helping,
+and export the transcript afterwards. Everything else is one of the two sessions.
+
 ## Where things stand
 
 | Phase 2 step | State |
