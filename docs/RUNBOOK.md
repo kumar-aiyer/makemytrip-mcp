@@ -2,13 +2,17 @@
 
 ## Triage order
 
-1. `mmt_setup_status` — is there a working browser?
-2. `mmt_selftest` — which capability broke, and which tier is each endpoint on?
-3. `<state>/diagnostics/failures.jsonl` — the last failures: endpoint, error kind,
+1. `mmt_version` — which commit is this running process built from, and does it match
+   `git rev-parse HEAD`? A stale process looks healthy; this is the only tool that tells
+   you the loaded code differs from the checkout. If it mismatches, restart the server
+   first — everything below is moot against old code.
+2. `mmt_setup_status` — is there a working browser?
+3. `mmt_selftest` — which capability broke, and which tier is each endpoint on?
+4. `<state>/diagnostics/failures.jsonl` — the last failures: endpoint, error kind,
    message and which tiers were attempted. Metadata only — response bodies and
    screenshots are not stored.
-4. **Headed is the default on Windows.** On a Linux server, set `MMT_HEADFUL=1` to see the browser. Headless is **known-blocked** by Akamai (`ERR_HTTP2_PROTOCOL_ERROR`).
-5. **Which browser did it get?** `mmt_setup_status.browser` distinguishes the two launch
+5. **Headed is the default on Windows.** On a Linux server, set `MMT_HEADFUL=1` to see the browser. Headless is **known-blocked** by Akamai (`ERR_HTTP2_PROTOCOL_ERROR`).
+6. **Which browser did it get?** `mmt_setup_status.browser` distinguishes the two launch
    paths. `chrome.exe (self-launched, CDP)` is the good one; a bare `chrome` or `bundled
    chromium` means it fell back to Playwright's launcher, and the cabs listing and flight
    results page will return the `200-OK` stub. Set `MMT_CHROME_PATH` if Chrome lives

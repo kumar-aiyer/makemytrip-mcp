@@ -28,6 +28,7 @@ Runs anywhere that speaks MCP over stdio: **Claude Cowork** (as a plugin), **Ope
 | `mmt_cab_add_place` | Register one from a pasted URL — the reliable manual path |
 | `mmt_selftest` | Live check of what still works, and which tier the router is using |
 | `mmt_setup_status` | Is the browser installed and working, and what to run if not |
+| `mmt_version` | **The exact code this server is running** — git commit, path, uptime. Call first to confirm you are not talking to a stale process (see `.clinerules/mcp-server-sync.md`) |
 
 ## Install
 
@@ -107,6 +108,7 @@ Documented at length in [docs/RUNBOOK.md](docs/RUNBOOK.md); the short version:
 
 ```bash
 python tests/test_parsers.py   # 112 assertions, no network and no browser needed
+python tests/test_version.py   # mmt_version record + sync against checkout HEAD, also offline
 python tools/probe.py          # live gates
 ```
 
