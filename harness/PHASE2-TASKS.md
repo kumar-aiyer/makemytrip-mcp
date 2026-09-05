@@ -1,12 +1,16 @@
 # Phase 2 task list — the reasoning-model acceptance run
 
-Phase 1 is the MCP server's ground truths (done except flights, see CLAUDECODE-PHASE1.md).
+Phase 1 is the MCP server's ground truths - **closed 2026-09-05**, all twelve bugs fixed,
+112/112 offline and 10/10 on `tools/probe.py` (see `findings.md`, `## Run 2026-09-05`).
 Phase 2 is the real acceptance test the whole project exists for: a **reasoning model in a
 fresh Cline session** orchestrates the MCP into a polished, honest, priced itinerary.
 
 ## Prerequisites
 
 - [ ] `makemytrip` server registered in Cline's MCP config, tools visible (restart MCP if not).
+      Cline has no `${CLAUDE_PLUGIN_ROOT}`, so the config needs absolute paths and an
+      **absolute** `MMT_MCP_HOME` pointing at this repo's `.state` (a relative one used to
+      break Chrome outright; config resolves it now, but the places and device id live there).
 - [x] Phase 1 green (2026-09-04): hotels (T2), trains (SBC-MAO + not_in_window), cabs
       (10 quotes Bengaluru-Goa; places registered: bengaluru, goa, panaji, kochi,
       rameswaram), flights (25 live itineraries).
@@ -73,7 +77,7 @@ model knowledge); PDF opens ~2-4 pages with legible tables; assumptions box.
 
 ## Step 4 — Fix whatever surfaces
 
-- Any MCP bug → log as BUG-8+ in `harness/findings.md`, fix on a branch, restart the server,
+- Any MCP bug → log as **BUG-13+** in `harness/findings.md`, fix on a branch, restart the server,
   re-run the failing call, then re-run the phase step.
 - Any model behaviour that violates an honesty gate → record it; decide whether the prompt
   needs more guidance or the tool needs a clearer error. Prefer improving the TOOL error
