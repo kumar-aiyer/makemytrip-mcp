@@ -95,8 +95,13 @@ reads a stale tool surface.
 
 ## Step 2 — the actual test
 
-Fresh Cline session, reasoning model. Paste `harness/prompts/goa-itinerary.md` **verbatim,
-typos included** ("Staring", "Bengalure", "goa"), substituting the run date.
+Fresh Cline session, reasoning model.
+
+**Paste only the two blockquotes between the PASTE markers** at the top of
+`harness/prompts/goa-itinerary.md` — the user prompt itself (**verbatim, typos included**:
+"Staring", "Bengalure", "goa") and the "Notes for the model" blockquote — with the run date
+substituted. That file also contains the audit checklist further down. Pasting the whole
+file would hand the model the list of traps it is being tested against and void the run.
 
 Run date = today + 101 days, so the train leg falls outside the 60-day window:
 
@@ -182,6 +187,27 @@ same-day round trips", it was making the tool refuse to answer one.
    the project has its acceptance evidence.
 
 ---
+
+## What must NOT reach the session under test
+
+**This runbook, for a start.** It names the kulem gap, the alternate-airport trap on both
+legs, the per-night hotel rule and which gates are weakest. A model that reads it will pass
+by recital.
+
+| Goes into the run session | Never |
+|---|---|
+| The user prompt blockquote, date substituted | This runbook |
+| The "Notes for the model" blockquote (servers available, call budget) | The audit checklist in the lower half of `goa-itinerary.md` |
+| Whatever the tools themselves return | `PHASE2-TASKS.md`, `PHASE2-REVIEW.md`, `findings.md` |
+
+The model *is* meant to be guided — but through `mmt_capabilities`, `known_gaps`, `refuses`
+and the tool error messages, not through the prompt. That is the project's whole thesis: an
+honourably-failing MCP beats a model that was told the answers. Every hint you are tempted
+to add to the prompt is a hint that belongs in a tool error instead.
+
+Running this runbook in a **separate** operator session (a second Cline window, or Claude
+Code) is fine and probably sensible — pre-flight, the state edit, the transcript audit. Just
+never the same session that is under test.
 
 ## Things that will bite you
 
