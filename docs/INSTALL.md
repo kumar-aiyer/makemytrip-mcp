@@ -164,6 +164,6 @@ capabilities currently work.
 | Variable | Default | Purpose |
 |---|---|---|
 | `MMT_MCP_HOME` | `~/.makemytrip-mcp` | State: device id, saved cab places, browser profile, diagnostics |
-| `MMT_HEADFUL` | unset | `1` shows the browser window. The fastest way to diagnose a block |
+| `MMT_HEADLESS` | `0` (Windows) | `1` forces headless (e.g. Linux servers). **Not supported against MakeMyTrip** — Akamai resets HTTP/2 streams from headless browsers. Default is headed on Windows (proven to work). |
 | `MMT_BROWSER_CHANNEL` | auto | Force `chrome`, `msedge`, or leave unset for bundled Chromium |
 | `MMT_IDLE_TIMEOUT` | `300` | Seconds before an idle browser is closed |

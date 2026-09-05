@@ -118,7 +118,7 @@ Record which gates pass. Gates G0–G3, G5, G7, G8 should pass on a healthy mach
 `mmt/harvest.py::harvest_place` drives MakeMyTrip's cab search form to capture a place object
 with a Google `place_id`, because no autosuggest endpoint exists. It has never been run.
 
-Run it with `MMT_HEADFUL=1` and watch. Expect to adjust: the selector for the location field,
+Run it with headed mode (default on Windows; `MMT_HEADFUL=1` on Linux) and watch. Expect to adjust: the selector for the location field,
 the URL fragment that identifies the autosuggest response, and the timing. The field is
 genuinely flaky — the overlay input sometimes does not take focus, so the click-wait-type
 sequence is retried once, and **nothing must be interleaved between the click and the type**
