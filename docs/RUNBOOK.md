@@ -7,7 +7,7 @@
 3. `<state>/diagnostics/failures.jsonl` — the last failures: endpoint, error kind,
    message and which tiers were attempted. Metadata only — response bodies and
    screenshots are not stored.
-4. `MMT_HEADFUL=1` — watch the browser. Fastest way to understand a block.
+4. **Headed is the default on Windows.** On a Linux server, set `MMT_HEADFUL=1` to see the browser. Headless is **known-blocked** by Akamai (`ERR_HTTP2_PROTOCOL_ERROR`).
 
 ## Symptoms
 
