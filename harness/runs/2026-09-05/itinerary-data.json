@@ -1,0 +1,130 @@
+{
+  "trip": {
+    "title": "Bengaluru to Goa - 6 nights, 2 adults",
+    "start": "2026-12-15",
+    "end": "2026-12-21",
+    "adults": 2,
+    "note": "Every rupee figure marked mmt_* was returned by a live MakeMyTrip MCP tool call on 2026-09-05 (raw results in step3-out.json). Figures marked web/estimate are not from the MCP server and are labelled as such. Flight fares are per adult; the hotel figure is the stay total for the whole range, counted once; cab fares are per vehicle."
+  },
+  "legs": [
+    {
+      "date": "2026-12-15",
+      "title": "Bengaluru -> Goa, check in at Candolim",
+      "detail": [
+        "IndiGo 6E 6554  BLR 19:00 -> GOI 20:20, nonstop, 1h20m  (Rs 4,367/adult all-in)",
+        "11 of the 25 itineraries MakeMyTrip returned actually land at GOI; the rest are",
+        "nearby airports (SDW) that the tool flags as alternate_airport and I excluded.",
+        "Check in: Hyatt Centric Candolim Goa, 5*, review 4.3"
+      ]
+    },
+    {
+      "date": "2026-12-16",
+      "title": "Candolim and Calangute",
+      "detail": [
+        "Beach day, no priced transport - walking distance from the hotel."
+      ]
+    },
+    {
+      "date": "2026-12-17",
+      "title": "Panaji - old quarter and the riverfront",
+      "detail": [
+        "Cab Panaji -> Goa (Calangute), 40 km  (Rs 1,945 per vehicle, Taxibazaar WagonR/Swift CNG)",
+        "This is the local-transport substitute leg from the run plan."
+      ]
+    },
+    {
+      "date": "2026-12-18",
+      "title": "South Goa - leisure",
+      "detail": [
+        "Unpriced: no cab quote was taken for this day."
+      ]
+    },
+    {
+      "date": "2026-12-19",
+      "title": "Dudhsagar Falls via Kulem",
+      "detail": [
+        "Cab Goa -> Kulem, 40 km, round trip  (Rs 2,145 per vehicle, Eroovo Dzire/Etios diesel)",
+        "Jeep safari from Kulem into the falls: Rs 700/person + Rs 40/person life jacket (web)",
+        "Forest park entry Rs 20/person (web). About 1h30m is allowed at the falls."
+      ]
+    },
+    {
+      "date": "2026-12-20",
+      "title": "Candolim - leisure",
+      "detail": [
+        "Unpriced: no transport booked."
+      ]
+    },
+    {
+      "date": "2026-12-21",
+      "title": "Goa -> Bengaluru",
+      "detail": [
+        "IndiGo 6E 6163  GOI 19:15 -> BLR 20:25, nonstop, 1h10m  (Rs 5,994/adult all-in)",
+        "12 of the 25 itineraries actually depart GOI; the cheapest row overall (FLY91 IC 5301,",
+        "Rs 3,699) leaves from SDW, not Goa, so it is excluded."
+      ]
+    }
+  ],
+  "costs": [
+    {
+      "label": "Flights BLR->GOI, 2 adults @ Rs 4,367",
+      "amount": 8734.0,
+      "source": "mmt_flight_search"
+    },
+    {
+      "label": "Flights GOI->BLR, 2 adults @ Rs 5,994",
+      "amount": 11988.0,
+      "source": "mmt_flight_search"
+    },
+    {
+      "label": "Hotel: Hyatt Centric Candolim, 6 nights (stay total)",
+      "amount": 13342.0,
+      "source": "mmt_hotel_search"
+    },
+    {
+      "label": "Cab Goa<->Kulem for Dudhsagar, 19 Dec (per vehicle)",
+      "amount": 2145.0,
+      "source": "mmt_cab_quote"
+    },
+    {
+      "label": "Cab Panaji->Goa, 17 Dec (per vehicle)",
+      "amount": 1945.0,
+      "source": "mmt_cab_quote"
+    },
+    {
+      "label": "Dudhsagar jeep safari, 2 x Rs 700",
+      "amount": 1400.0,
+      "source": "web: officialdudhsagarwaterfallgoa.com"
+    },
+    {
+      "label": "Dudhsagar park entry, 2 x Rs 20",
+      "amount": 40.0,
+      "source": "web: traveltriangle.com"
+    },
+    {
+      "label": "Life jackets, 2 x Rs 40",
+      "amount": 80.0,
+      "source": "web: officialdudhsagarwaterfallgoa.com"
+    },
+    {
+      "label": "Meals, 6 days x 2 x Rs 1,500/person/day",
+      "amount": 18000.0,
+      "source": "estimate: mid-range, goaoriginals/budgetyourtrip"
+    }
+  ],
+  "unpriced": [
+    "GOI airport <-> Candolim hotel transfers, both ways. No airport place is registered in .state and no quote was taken, so this is genuinely missing from the total.",
+    "18 and 20 Dec local transport - leisure days, nothing quoted.",
+    "Trains BLR<->Goa: mmt_train_search returns not_in_window on both dates. Indian Railways opens the 60-day ARP on 2026-10-16 (outbound) and 2026-10-22 (return), so no rail fare can exist yet. This is correct tool behaviour, not a failure."
+  ],
+  "alternatives": [
+    "Driving instead of flying: cab Bengaluru -> Goa 603 km, one-way Rs 12,161 all-in (Savaari WagonR/Swift CNG); round trip Rs 20,264. Both per vehicle, from mmt_cab_quote. The round trip beats two one-ways (Rs 24,322) but loses to the Rs 20,722 of flights."
+  ],
+  "sources": {
+    "mmt_flight_search": "2 calls (the run budget), 25 itineraries each, tier 2, 2026-09-05T10:08 PDT",
+    "mmt_hotel_search": "Goa CTGOI, 2026-12-15 to 2026-12-21, nights=6, rooms=1, adults=2, signed-out retail rates",
+    "mmt_cab_quote": "4 calls: BLR->Goa OW and RT, Goa->Kulem RT, Panaji->Goa OW",
+    "mmt_cab_find_place": "kulem registered as place_id ChIJU_8H2moHvzsRDqa5IZGjLk4",
+    "web/estimate": "Dudhsagar fees and meal rates are NOT from the MCP server - see labels above"
+  }
+}

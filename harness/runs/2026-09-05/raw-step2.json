@@ -1,0 +1,157 @@
+[
+  {
+    "tool": "mmt_cab_quote",
+    "args": {
+      "origin": "bengaluru",
+      "dest": "goa",
+      "date": "2026-12-15"
+    },
+    "elapsed_s": 31.1,
+    "result": {
+      "route": "Bengaluru -> Goa beach",
+      "date": "2026-12-15",
+      "url": "https://www.makemytrip.com/cabs/listing?tripType=OW&departDate=15-12-2026&pickupTime=10%3A00&intlFlow=false&from=%7B%22address%22%3A%22Bengaluru%2C%20Karnataka%2C%20India%22%2C%22is_city%22%3Atrue%2C%22secondary_text%22%3A%22Karnataka%2C%20India%22%2C%22is_airport%22%3Afalse%2C%22main_text%22%3A%22Bengaluru%22%2C%22place_id%22%3A%22ChIJbU60yXAWrjsR4E9-UejD3_g%22%7D&to=%7B%22address%22%3A%22Goa%20beach%2C%20Maddo%20Waddo%2C%20MADDO%20VADDO%2C%20Calangute%2C%20Goa%2C%20India%22%2C%22is_city%22%3Afalse%2C%22secondary_text%22%3A%22Maddo%20Waddo%2C%20MADDO%20VADDO%2C%20Calangute%2C%20Goa%2C%20India%22%2C%22is_airport%22%3Afalse%2C%22main_text%22%3A%22Goa%20beach%22%2C%22place_id%22%3A%22ChIJ6dgmPADBvzsRw231CmbGUKk%22%7D",
+      "distance_km": 603,
+      "approx_hours": 5,
+      "cab_count": 10,
+      "cabs": [
+        {
+          "car": "WagonR, Swift",
+          "category": "HATCHBACK",
+          "fuel": "CNG/Diesel",
+          "seats": "4 Seats",
+          "vendor": "Savaari",
+          "base_inr": 11216,
+          "tax_fees_inr": 945,
+          "all_in_inr": 12161,
+          "extra_per_km_inr": 15,
+          "all_in_per_km_inr": 20.17
+        },
+        {
+          "car": "Dzire, Etios",
+          "category": "SEDAN",
+          "fuel": "CNG/Diesel",
+          "seats": "4 Seats",
+          "vendor": "Savaari",
+          "base_inr": 11450,
+          "tax_fees_inr": 957,
+          "all_in_inr": 12407,
+          "extra_per_km_inr": 15,
+          "all_in_per_km_inr": 20.58
+        },
+        {
+          "car": "WagonR, Swift",
+          "category": "HATCHBACK",
+          "fuel": "DIESEL",
+          "seats": "4 Seats",
+          "vendor": "Savaari",
+          "base_inr": 11880,
+          "tax_fees_inr": 978,
+          "all_in_inr": 12858,
+          "extra_per_km_inr": 16.25,
+          "all_in_per_km_inr": 21.32
+        },
+        {
+          "car": "Dzire, Etios",
+          "category": "SEDAN",
+          "fuel": "DIESEL",
+          "seats": "4 Seats",
+          "vendor": "Savaari",
+          "base_inr": 12174,
+          "tax_fees_inr": 993,
+          "all_in_inr": 13167,
+          "extra_per_km_inr": 16.25,
+          "all_in_per_km_inr": 21.84
+        },
+        {
+          "car": "Xylo, Ertiga",
+          "category": "SUV",
+          "fuel": "CNG/Diesel",
+          "seats": "6 Seats",
+          "vendor": "Savaari",
+          "base_inr": 16119,
+          "tax_fees_inr": 1269,
+          "all_in_inr": 17388,
+          "extra_per_km_inr": 18,
+          "all_in_per_km_inr": 28.84
+        },
+        {
+          "car": "Maruti Suzuki Ertiga",
+          "category": "SUV",
+          "fuel": "CNG/Diesel",
+          "seats": "6 Seats",
+          "vendor": "Savaari",
+          "base_inr": 16281,
+          "tax_fees_inr": 1281,
+          "all_in_inr": 17562,
+          "extra_per_km_inr": 18.25,
+          "all_in_per_km_inr": 29.12
+        },
+        {
+          "car": "Xylo, Ertiga",
+          "category": "SUV",
+          "fuel": "DIESEL",
+          "seats": "6 Seats",
+          "vendor": "Savaari",
+          "base_inr": 17205,
+          "tax_fees_inr": 1323,
+          "all_in_inr": 18528,
+          "extra_per_km_inr": 20,
+          "all_in_per_km_inr": 30.73
+        },
+        {
+          "car": "Maruti Suzuki Ertiga",
+          "category": "SUV",
+          "fuel": "DIESEL",
+          "seats": "6 Seats",
+          "vendor": "Savaari",
+          "base_inr": 17367,
+          "tax_fees_inr": 1336,
+          "all_in_inr": 18703,
+          "extra_per_km_inr": 20.25,
+          "all_in_per_km_inr": 31.02
+        },
+        {
+          "car": "Toyota Innova",
+          "category": "SUV",
+          "fuel": "DIESEL",
+          "seats": "6 Seats",
+          "vendor": "Taxibazaar",
+          "base_inr": 22582,
+          "tax_fees_inr": 1225,
+          "all_in_inr": 23807,
+          "extra_per_km_inr": 36,
+          "all_in_per_km_inr": 39.48
+        },
+        {
+          "car": "Innova Crysta",
+          "category": "SUV",
+          "fuel": "DIESEL",
+          "seats": "6 Seats",
+          "vendor": "Savaari",
+          "base_inr": 23195,
+          "tax_fees_inr": 1623,
+          "all_in_inr": 24818,
+          "extra_per_km_inr": 20,
+          "all_in_per_km_inr": 41.16
+        }
+      ],
+      "cheapest": {
+        "car": "WagonR, Swift",
+        "category": "HATCHBACK",
+        "fuel": "CNG/Diesel",
+        "seats": "4 Seats",
+        "vendor": "Savaari",
+        "base_inr": 11216,
+        "tax_fees_inr": 945,
+        "all_in_inr": 12161,
+        "extra_per_km_inr": 15,
+        "all_in_per_km_inr": 20.17
+      },
+      "tier_used": 2,
+      "elapsed_ms": 13012,
+      "cached": false,
+      "fetched_at": "2026-09-05T10:06:35-0700"
+    }
+  }
+]

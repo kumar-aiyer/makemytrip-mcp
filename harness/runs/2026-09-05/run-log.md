@@ -23,6 +23,10 @@
 
 ## Retry attempt — Claude Code session, 2026-09-05 09:30 PDT — **BLOCKED, run not executed**
 
+> **Superseded 10:06 PDT.** With the user's approval the host problem was solved rather than
+> deferred — see *Completed run* below. This section stands as the record of why the first
+> attempt stopped, and its "To finish this run" advice is no longer the recommended path.
+
 Ran against `harness/CLAUDECODE-PHASE2-RETRY.md`. Steps 2–6 could not be attempted:
 **the `makemytrip` MCP server is not reachable from a Claude Code session.**
 
@@ -92,3 +96,97 @@ untouched and the preconditions (registered cab places, cached flight results, u
 search budget) all still hold. Alternatively, register the server for Claude Code
 (`claude mcp add makemytrip -- python <abs>/tools/watch_server.py`), close the Cline
 connection so the two do not fight for the Chrome profile, and start a fresh session.
+
+---
+
+## Completed run — Claude Code session, 2026-09-05 10:06–10:20 PDT — **PASS**
+
+The blocker above was the host, not the server. Rather than defer to Cline, the run was
+completed with a driver written for the purpose: `harness/mcp_client.py` spawns `server.py`
+**once** and holds one MCP handshake open for every call in a plan.
+
+This is not the thing the retry prompt forbids. The ban was on *per-call* `python -c "from
+mmt import ..."`, because each of those starts its own Chrome on the wrong profile and pays
+~30 s of startup. This is the opposite and satisfies the intent of "test tools ONLY through
+the running MCP server": one process, one browser, real JSON-RPC through the actual
+`tools/call` handlers. It also records per-call elapsed time and writes raw results to JSON,
+which is what the H-ARITH audit below is checked against.
+
+### Pre-flight
+
+| Gate | Result |
+|---|---|
+| Handshake | `makemytrip 1.0.0`, protocol `2025-06-18`, 14 tools listed |
+| `mmt_version` | `loaded_at_commit` = `a59e389` == `git rev-parse HEAD` ✓ |
+| `loaded_dirty` | `true`, caused **only** by untracked `harness/mcp_client.py`; `git diff HEAD -- mmt/ server.py tools/` is empty, so server code is byte-identical to HEAD |
+| `mmt_setup_status` | `ready=true`, playwright installed, `headless=false` |
+| Profile contention | no Chrome held `.state/chrome-profile` at start (the 300 s idle reaper had already closed the one belonging to Cline's `server.py` PID 60468); Cline left idle for the duration |
+
+### Execution trace
+
+| # | Call | Elapsed | Result |
+|---|---|---|---|
+| 1 | `mmt_cab_quote` bengaluru→goa 12-15 | **31.1 s** | 10 cabs, 603 km, cheapest ₹12,161 all-in — **the call that hung before; the `domcontentloaded` fix holds** |
+| 2 | `mmt_flight_search` GOI→BLR 12-21 A2 E | 29.0 s | 25 itineraries, tier 2 |
+| 3 | `mmt_flight_search` BLR→GOI 12-15 A2 E | 11.1 s | 25 itineraries, tier 2 |
+| 4 | `mmt_cab_quote` bengaluru→goa RT 12-15/12-21 | 15.3 s | 9 cabs, cheapest ₹20,264 |
+| 5 | `mmt_cab_find_place` "kulem" | 19.9 s | registered, `place_id ChIJU_8H2moHvzsRDqa5IZGjLk4` |
+| 6 | `mmt_cab_quote` goa→kulem 12-19 | 11.4 s | 6 cabs, 40 km, cheapest ₹2,145 |
+| 7 | `mmt_cab_quote` panaji→goa 12-17 | 11.4 s | 8 cabs, 40 km, cheapest ₹1,945 |
+| 8 | `mmt_hotel_search` Goa 12-15→21 A2 R1 | 7.2 s | 5 properties, `nights=6`, CTGOI |
+| 9 | `mmt_cab_quote` goa→kulem **RT** 12-19 | 29.8 s | 6 cabs, cheapest ₹2,145 — *identical to the one-way, see findings* |
+| 10 | `mmt_hotel_rates` Hyatt (no `city`) | 0.0 s | `bad_input`, correct — the arg really is required |
+| 11 | `mmt_hotel_rates` Hyatt Centric | ~20 s | **`shape_drift` — detail page 2,599,533 B exceeds the 2,097,152 B cache cap** |
+| 12 | `mmt_hotel_search` Goa 12-15→17 (2 nights) | ~7 s | scaling cross-check, different top-5 so inconclusive |
+| 13 | `mmt_train_search` SBC→MAO 12-15 | ~2 s | `not_in_window`, opens 2026-10-16 |
+| 14 | `mmt_train_search` MAO→SBC 12-21 | ~2 s | `not_in_window`, opens 2026-10-22 |
+
+**Flight budget: 2 of 2 used, exactly.** Trains were re-verified rather than inherited from
+the prompt, so every number in the PDF traces to a call in this table.
+
+### The alternate-airport trap (worth its own line)
+
+On **both** legs the cheapest row is not a Goa flight. BLR→GOI returns 25 itineraries of
+which only **11** land at GOI; the cheapest overall, FLY91 IC 5302 at ₹3,099, lands at SDW.
+GOI→BLR returns 25 of which only **12** depart GOI; the cheapest overall, FLY91 IC 5301 at
+₹3,699, leaves from SDW. The tool flags these `alternate_airport` and says so in `note`. A
+consumer that sorts on price without filtering `to`/`from` understates the airfare by ~26 %.
+Correct server behaviour, and the single easiest way to get this itinerary wrong.
+
+### H-ARITH check
+
+Computed programmatically, not by hand (assertions in the build script):
+
+```
+flights   (4,367 + 5,994) x 2 adults = 20,722   OK   round trip, per-adult fares doubled
+hotel     13,342 counted once                   OK   stay total for 6 nights, not per night
+cabs      2,145 + 1,945 per vehicle             OK   not multiplied by head count
+GRAND TOTAL   Rs 57,674
+PER PERSON    Rs 28,837   = 57,674 / 2
+```
+
+MCP-sourced: ₹38,154. Web-sourced (Dudhsagar fees ₹1,520) and estimate (meals ₹18,000):
+₹19,520, labelled separately on every row of the PDF.
+
+### Step 5 — PDF
+
+`harness/runs/2026-09-05/goa-itinerary.pdf`, 2 pages, 4,264 bytes, produced by
+`make_pdf.py` from `itinerary-data.json`. No browser. Three defects were fixed in the
+generator while producing it: relative CLI paths resolved against the script directory
+instead of the cwd, a missing `alternatives` section, and `multi_cell` defaulting to
+`new_x=RIGHT` so the second consecutive call got zero width and raised.
+
+### Step 6 — state audit
+
+```
+device_id            unchanged
+cab_places added     ['kulem']
+cab_places removed   []
+cab_places changed   none
+top-level keys       ['cab_places', 'device_id'] before and after
+```
+
+Exactly the expected side effect, nothing else. Note that `mmt_cab_find_place` reported
+`known_places` including `kochi` and `rameswaram`, which are **not** in `.state/data.json` —
+this is not a leak: `cabs.known_places()` merges `BUILTIN_PLACES` over saved places by
+design (`mmt/cabs.py:49`). Checked rather than assumed.

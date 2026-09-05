@@ -85,6 +85,8 @@ def render_text(data: dict) -> str:
     L.append(f"{'PER PERSON (/' + str(t.get('adults', 2)) + ')':<{width}}  "
              f"{rupees(per_person):>12}")
 
+    if data.get("alternatives"):
+        L += ["", "ALTERNATIVES", "-" * 12] + [f"  - {a}" for a in data["alternatives"]]
     if data.get("unpriced"):
         L += ["", "NOT PRICED", "-" * 10] + [f"  - {u}" for u in data["unpriced"]]
     if data.get("sources"):
@@ -106,7 +108,7 @@ def render_pdf(data: dict, out: Path) -> Path:
              new_x="LMARGIN", new_y="NEXT")
     if t.get("note"):
         pdf.set_font("Helvetica", "I", 9)
-        pdf.multi_cell(0, 5, t["note"])
+        pdf.multi_cell(0, 5, t["note"], new_x="LMARGIN", new_y="NEXT")
     pdf.ln(3)
 
     pdf.set_font("Helvetica", "B", 13)
@@ -117,7 +119,7 @@ def render_pdf(data: dict, out: Path) -> Path:
         pdf.set_font("Helvetica", "", 10)
         for line in leg.get("detail", []):
             pdf.set_x(pdf.l_margin + 6)
-            pdf.multi_cell(0, 5, line)
+            pdf.multi_cell(0, 5, line, new_x="LMARGIN", new_y="NEXT")
     pdf.ln(3)
 
     pdf.set_font("Helvetica", "B", 13)
@@ -139,32 +141,37 @@ def render_pdf(data: dict, out: Path) -> Path:
     pdf.cell(30, 6, rupees(per_person), align="R")
     pdf.cell(0, 6, "", new_x="LMARGIN", new_y="NEXT")
 
+    if data.get("alternatives"):
+        pdf.ln(3)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(0, 7, "Alternatives (not in the total)", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 9)
+        for alt in data["alternatives"]:
+            pdf.multi_cell(0, 5, f"- {alt}", new_x="LMARGIN", new_y="NEXT")
     if data.get("unpriced"):
         pdf.ln(3)
         pdf.set_font("Helvetica", "B", 11)
         pdf.cell(0, 7, "Not priced", new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", "", 9)
         for u in data["unpriced"]:
-            pdf.multi_cell(0, 5, f"- {u}")
+            pdf.multi_cell(0, 5, f"- {u}", new_x="LMARGIN", new_y="NEXT")
     if data.get("sources"):
         pdf.ln(3)
         pdf.set_font("Helvetica", "B", 11)
         pdf.cell(0, 7, "Sources", new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", "", 8)
         for k, v in data["sources"].items():
-            pdf.multi_cell(0, 4.5, f"{k}: {v}")
+            pdf.multi_cell(0, 4.5, f"{k}: {v}", new_x="LMARGIN", new_y="NEXT")
 
     pdf.output(str(out))
     return out
 
 
 def main(argv: list[str]) -> int:
-    src = Path(argv[1]) if len(argv) > 1 else HERE / "itinerary-data.json"
-    out = Path(argv[2]) if len(argv) > 2 else HERE / "goa-itinerary.pdf"
-    if not src.is_absolute():
-        src = HERE / src
-    if not out.is_absolute():
-        out = HERE / out
+    # Explicit arguments resolve against the caller's cwd, like any other CLI.
+    # Only the no-argument defaults sit beside this script.
+    src = Path(argv[1]).resolve() if len(argv) > 1 else HERE / "itinerary-data.json"
+    out = Path(argv[2]).resolve() if len(argv) > 2 else HERE / "goa-itinerary.pdf"
     if not src.exists():
         raise SystemExit(f"no itinerary data at {src} -- Step 3 must run first")
 

@@ -267,6 +267,9 @@ build that motivated this is exactly the silent failure the acceptance run must 
 
 ## Run 2026-09-05 - Phase 2 acceptance: attempted from Claude Code, **blocked before Step 2**
 
+> **Superseded the same morning** - the host problem was solved rather than deferred. See the
+> next section. The structural point below still stands and is why the driver exists.
+
 The acceptance run did not execute. Full evidence in `harness/runs/2026-09-05/run-log.md`;
 the finding worth carrying forward is short.
 
@@ -298,3 +301,103 @@ unspent. The only artifact produced is `harness/runs/2026-09-05/make_pdf.py` (St
 generator, data-driven and smoke-tested, refuses to print a cost row without a `source`).
 It is deliberately deferred, not weakened: fpdf2 stays a harness-only tool and is not added
 to `requirements.txt`, which remains Playwright-only by design.
+
+---
+
+## Run 2026-09-05 - Phase 2 acceptance run: **PASS**, three new defects
+
+Driven from Claude Code through `harness/mcp_client.py` (one spawned `server.py`, one
+handshake, one Chrome, real `tools/call` for every number). Pre-flight `mmt_version` matched
+HEAD `a59e389` exactly. 14 tool calls, flight budget 2/2. Full trace and H-ARITH working in
+`harness/runs/2026-09-05/run-log.md`; the deliverable is `goa-itinerary.pdf`, ₹57,674 for two
+(₹28,837/person), of which ₹38,154 is MCP-sourced and the rest labelled web/estimate.
+
+### The two hang fixes hold
+
+`mmt_cab_quote` bengaluru→goa - the call that hung the previous attempt - returned in
+**31.1 s** with 10 cabs. `wait_for="domcontentloaded"` is the right call: MMT's ad pixels
+genuinely never stop, so `networkidle` was never going to fire. The flight harvester without
+`await resp.finished()` returned 25 itineraries on both legs in 29.0 s and 11.1 s. Neither
+fix has a downside visible at this sample size.
+
+### BUG-13 (new): the page cache cap is smaller than a hotel detail page
+
+`mmt_hotel_rates` on Hyatt Centric Candolim now fails outright:
+
+```
+HTTP 200 body of 2,599,533 bytes exceeds the 2,097,152-byte page cache cap.
+kind: shape_drift   attempts: ['tier1:shape_drift', 'tier2:shape_drift']
+```
+
+The page is 2.6 MB and the cap is 2 MB, so **both tiers fail and the tool has no working
+path at all** for this property. Two things are wrong beyond the number. First, `shape_drift`
+is the wrong taxonomy - MakeMyTrip did not change the page shape, our own limit was too
+small; the hint ("MakeMyTrip changed the page, or a proxy wrapped it") sends the reader
+somewhere useless. Second, a size cap that rejects the response *after* paying for the fetch
+buys nothing. Phase 1 closed with "Core hotel pricing: USABLE" on the strength of this tool,
+so this is a regression in reach, not a cosmetic error.
+
+### BUG-14 (new): `trip_type: RT` appears not to reach short-route cab listings
+
+Same tool, same day, one flag apart:
+
+| Route | Distance | OW cheapest | RT cheapest |
+|---|---|---|---|
+| bengaluru → goa | 603 km | ₹12,161 | ₹20,264 (+67 %) |
+| goa → kulem | 40 km | ₹2,145 | **₹2,145 (identical)** |
+
+The Kulem RT returned the same 6 cabs at the same fares as the one-way, despite `tripType=RT`
+being present in the URL the tool built and a `return_date` being accepted. Either MakeMyTrip
+quotes a same-day local round trip at the one-way rate, or the RT parameter is not reaching
+the listing on short routes and the tool is silently reporting a one-way as a round trip.
+**The second is a wrong number presented as a right one**, which is the BUG-12 failure mode
+again in a different place, so it should not be left to assumption. A same-day RT is the
+unusual case here (`return_date == date`); an RT with a later return date on the same short
+route would separate the two explanations in one call.
+
+### BUG-15 (new, minor): `approx_hours` is not plausible on long routes
+
+bengaluru → goa returns `distance_km: 603` with `approx_hours: 5`. That is 121 km/h average
+on Indian highways. The 40 km local routes look sane, so the field is probably parsed from
+the wrong element, or a units/format assumption breaks above some threshold. It does not
+touch any fare, but it is the kind of number a consumer would put in front of a user.
+
+### Not a bug, checked anyway
+
+- `known_places` reports `kochi` and `rameswaram` that are absent from `.state/data.json`.
+  By design - `cabs.known_places()` merges `BUILTIN_PLACES` over saved places
+  (`mmt/cabs.py:49`). Verified in source rather than assumed.
+- Error taxonomy stayed correct throughout: `bad_input` for `mmt_hotel_rates` missing its
+  required `city`, `not_in_window` for both train dates with the right `booking_opens`
+  (2026-10-16 outbound, 2026-10-22 return). Trains were re-measured, not inherited.
+- `.state` diff after the whole run is exactly `+kulem`. Nothing else moved.
+
+### Unresolved, and blocked by BUG-13: are hotel figures stay totals or per-night?
+
+`mmt_hotel_search` returns `nights: 6` and an `all_in_inr` it documents as the stay total,
+with `all_in_per_night_inr` derived as `all_in / nights` (checked: 13342/6 = 2224 ✓). Under
+that contract Hyatt Centric Candolim, 5*, comes to **₹2,224/night in peak December** - which
+is not a credible retail rate. Under the other reading the same list makes Resort Primo
+₹25,091/night, which is also not credible. So the list is not internally consistent under
+*either* interpretation, and at least some rows are being read wrong.
+
+The clean way to settle it is `mmt_hotel_rates`, which returns per-room-night rate plans -
+and that is exactly the tool BUG-13 just broke. The fallback cross-check (same hotel, 2-night
+range) was inconclusive because the 2-night search returned a different top 5. **The
+itinerary therefore uses the documented contract, says so on the page, and this stays open.**
+It is the highest-value thing to settle next: it is the single largest MCP-sourced line in
+the total.
+
+### Latency, this run
+
+cab quote 11-31 s (cold 31 s, warm 11-15 s), flight search 29 s cold / 11 s warm, hotel
+search 7 s, `cab_find_place` 20 s, train search ~2 s (tier 1), `hotel_rates` ~20 s to fail.
+The whole 7-call collection batch ran in 105 s on one browser - the single-server design is
+worth roughly a 3x speedup over per-call process spawning.
+
+### Carried forward for the harness
+
+`harness/mcp_client.py` removes the host dependency entirely: any environment that can run
+Python can now drive a real acceptance run, with per-call timings and raw JSON captured for
+audit. An acceptance prompt should still name the commit it must run against - `mmt_version`
+against `git rev-parse HEAD` caught nothing this time only because it was checked first.
