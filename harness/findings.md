@@ -709,3 +709,72 @@ ignored, so it would not otherwise survive.
 **This does not retro-fit the Sonnet-5 run.** The log did not exist while it ran, so that
 run's H6 stays unscoreable. It is scoreable from the next one onwards, without asking the
 host for anything.
+
+---
+
+## Run 2026-09-05 — acceptance run 3 (Sonnet-5): **H6 passes at last, H1 fails**
+
+Full audit in `harness/runs/2026-09-05-acceptance-3/run-log.md`. 24 calls, all recorded by
+the server itself. The failure has moved from the evidence to the subject, which is the
+point of the harness.
+
+**H6 took one command per figure.** Six spot-checks, six traces — a flight fare to
+`itineraries[3].all_in_inr`, a hotel rate to `rate_plans[0].nightly_all_in_inr`, and so on.
+The first acceptance run in four whose numbers could be checked at all. The call log paid for
+itself within an hour of existing.
+
+**H-ARITH was exact**: line items and the category breakdown independently sum to 138,986,
+and every derived line reconciles (`4 x 12,762 = 51,048`, `2 x 4,577 = 9,154`). BUG-16's rule
+held again, and the deliverable reproduced the tool's own caveat almost verbatim —
+*"stay_estimate = nightly rate × nights, an MMT-provided estimate for a date range (a range
+spanning a price change may not match exactly)"*. Disclosure in `mmt_capabilities` is being
+read and repeated.
+
+### H1 failed, and it is the subject's failure, not a documentation gap
+
+The deliverable is all-in throughout: flights as `Rs 9,154` for two, hotels as "Nightly
+all-in". Not one base/tax split anywhere. Every call it made returned `base_inr`/`tax_inr` or
+`nightly_base_inr`/`nightly_tax_inr`, and `capabilities.pricing_conventions.split` says in
+so many words that they are always reported separately. It was told, it had the data, it
+collapsed them anyway. The previous subject printed `3,222 + 1,145 = 4,367`, so this is a
+regression between runs rather than a missing affordance — nothing to fix in the tool.
+
+### Three things only the log could show
+
+1. **The PDF's claim about its own process is false.** It states "only one outbound and one
+   return flight search were run". There were four: it resolved "December 15th" to **2025**
+   first and burned ~200 s discovering that a nine-month-old date returns nothing.
+2. **A leg tagged `[RES]` ("no MMT endpoint exists") was quoted.**
+   `mmt_cab_quote calangute->palolem` returned Rs 2,145; the budget bills Rs 2,800 as desk
+   research. Conservative in rupees, wrong in provenance — and undetectable from the
+   deliverable, which is exactly the class of error H6 was written for.
+3. **The circuit breaker fired and the subject recovered by itself** — two `blocked` at 0 ms,
+   then `mmt_selftest` plus a throwaway Kochi search to re-probe, then it resumed.
+
+### BUG-17 reproduces deterministically
+
+"Calangute Goa" → **"Goa beach"**; "Palolem Goa" → **"Bibhitaki Hostel Palolem Goa"**, the
+same hostel the previous subject got for `southgoa`. Two of four registrations wrong,
+`is_city: false` on all four, and real transfers priced between them. Two runs, same wrong
+hits — this is not luck of the draw, it is the first autocomplete row being taken on trust.
+
+### BUG-18 (new): no past-date guard on flights or hotels
+
+A flight search for `2025-12-15`, run in September 2026, drove a live search page for
+**99 seconds** and answered `empty_valid`. The 2025 hotel searches returned `transport`
+errors and tripped the circuit breaker. Trains check their window and answer `not_in_window`
+in about two seconds; flights and hotels check nothing at all. A past date is `bad_input` and
+is knowable before a byte leaves the machine. It cost this subject ~200 s, two flight
+searches and a circuit trip — and a model resolving a bare "December 15th" to the wrong year
+is not an exotic failure, it is the default one.
+
+### Where Phase 2 stands
+
+Every gate now passes on some run, and every gate has failed on some run — but no single run
+has passed them all. Outstanding, in order of cheapness:
+
+- **BUG-18** — a date guard. Small, and removes a whole class of wasted run.
+- **BUG-17** — a confidence signal on `cab_find_place`. Two runs of evidence.
+- **H1** — subject behaviour; re-run and see whether it recurs.
+- **H2** — never exercised in four runs. Four subjects have all chosen to fly. The trigger
+  should either be retired or the prompt should invite a transport comparison.
