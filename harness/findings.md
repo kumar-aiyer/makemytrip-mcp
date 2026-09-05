@@ -262,3 +262,39 @@ new tooling around the server, not a change to `mmt/` server behaviour; no serve
 Carried forward for Phase 2: the pre-flight should call `mmt_version` first and compare
 `loaded_at_commit` against `git rev-parse HEAD` before trusting any live result - the stale
 build that motivated this is exactly the silent failure the acceptance run must not measure.
+
+---
+
+## Run 2026-09-05 - Phase 2 acceptance: attempted from Claude Code, **blocked before Step 2**
+
+The acceptance run did not execute. Full evidence in `harness/runs/2026-09-05/run-log.md`;
+the finding worth carrying forward is short.
+
+**The MMT server is single-host by construction, and the host is whoever launched it.**
+It speaks MCP over stdio, so the pipes belong to the process that spawned `watch_server.py`
+- during this attempt, the VS Code extension host running Cline (watcher PID 160536, child
+`server.py` PID 60468, up since 07:09 PDT). A Claude Code session in the same repo, on the
+same machine, at the same moment, has no way to reach it: not registered in `~/.claude.json`
+(top-level and project `mcpServers` both `{}`), no `.mcp.json`, and nothing in the deferred
+tool list. This is not a misconfiguration to fix in-session. Two prior findings say why
+fixing it in-session is the wrong instinct:
+
+- the host snapshots `tools/list` at connect and never re-fetches, so a registration added
+  mid-session cannot surface (dev-infra run, "interface caveat"); and
+- a second `server.py` would race the first for the same Chrome profile, which is the
+  locked-profile hazard from Phase 1 finding #3 - a launch against a locked profile hands
+  its startup URL to the running instance and exits 0, reading as "Chrome died".
+
+**Consequence for the harness:** an acceptance-run prompt has to name the host it must be
+run from, the same way the pre-flight names the commit it must be run against. `mmt_version`
+protects against talking to a *stale* server; nothing protected against having *no* server,
+because the failure mode is a missing tool rather than a wrong answer. A pre-flight step
+that fails loudly when `mmt_version` is not callable at all would have caught this in one
+call instead of a full session of inference.
+
+Nothing was consumed: `.state/data.json` is byte-identical to `state-before.json` (no
+`kulem`), `failures.jsonl` is unchanged at 34 rows, and the 2-call flight-search budget is
+unspent. The only artifact produced is `harness/runs/2026-09-05/make_pdf.py` (Step 5's
+generator, data-driven and smoke-tested, refuses to print a cost row without a `source`).
+It is deliberately deferred, not weakened: fpdf2 stays a harness-only tool and is not added
+to `requirements.txt`, which remains Playwright-only by design.
