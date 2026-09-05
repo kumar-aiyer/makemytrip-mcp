@@ -123,7 +123,36 @@ reads a stale tool surface.
 
 ## Step 2 — the actual test
 
-Fresh Cline session, reasoning model.
+### 2a. The subject must NOT be pointed at this repository
+
+Learned the hard way on 2026-09-05: a subject with this repo as its workspace read
+`harness/runs/<previous>/` and shipped the previous run's PDF as its own. The repo also
+holds the audit checklist, the task list, this runbook and `findings.md`. Marking paste
+boundaries while mounting all of that is theatre.
+
+**Open the subject's VS Code window on an empty folder instead:**
+
+    C:/Users/kumar/projects/claudecodeprojects/mmt-acceptance-workspace
+
+It is outside the repo, not a git repository, and empty. Python and fpdf2 resolve there, so
+the model can still write its PDF. Cline's MCP registration is global, so `makemytrip` is
+available in any workspace, and `MMT_MCP_HOME` stays absolute so the server still uses this
+repo's `.state`. The subject gets the tool surface and nothing else, which is the whole test.
+
+**Only one Cline window may be connected at a time.** Each spawns its own
+`tools/watch_server.py`, and two servers fight for the Chrome profile lock. Close (or
+disconnect) the repo window before opening the workspace window. If a server is killed while
+its Chrome is up, the browser is orphaned holding the profile lock and the next launch fails
+with "Chrome exited" — clear it with:
+
+```bash
+MMT_MCP_HOME=.state python -c "import mmt.session as S; print('killed', S.sweep_orphans())"
+```
+
+### 2b. Run it
+
+Fresh Cline session, **reasoning model** (a thinking-tier model — not a Flash/mini class
+one; `gemini-2.8-flash` was tried on 2026-09-05 and was the wrong instrument).
 
 **Paste only the two blockquotes between the PASTE markers** at the top of
 `harness/prompts/goa-itinerary.md` — the user prompt itself (**verbatim, typos included**:
