@@ -118,25 +118,27 @@ class _Watcher:
         if self._gone:
             return
         self._last_start = time.monotonic()
-        self.child = subprocess.Popen(
+        child = subprocess.Popen(
             self.child_cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=None,          # child diagnostics land on our stderr, not stdout
             bufsize=0,
         )
-        # Route the child's protocol bytes to our stdout. The pump exits on EOF,
-        # i.e. when this particular child exits.
-        _Pump(self.child.stdout, sys.stdout.buffer, "child->client",
+        _Pump(child.stdout, sys.stdout.buffer, "child->client",
               self.out_lock).start()
-        # Flush any client frames that arrived while no child was running (the
-        # initial handshake races this spawn; a crash-reload gap can too).
+        # Publish the child and flush any client frames that arrived while no
+        # child was running (the initial handshake races this spawn; a
+        # crash-reload gap can too). All of this happens under the same lock
+        # write_client uses, so an old buffered frame can never be overtaken by
+        # a newer direct write to the just-published child.
         with self._pending_lock:
             pending = self._pending
             self._pending = []
+            self.child = child
         for frame in pending:
             self.write_client(frame)
-        _log(f"child up pid={self.child.pid} ({reason})")
+        _log(f"child up pid={child.pid} ({reason})")
 
     def stop_child(self) -> None:
         old = self.child
