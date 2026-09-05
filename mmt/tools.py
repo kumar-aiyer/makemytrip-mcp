@@ -468,6 +468,7 @@ async def mmt_selftest(quick: bool = False, fresh: bool = True) -> dict:
     co = (today + timedelta(days=32)).isoformat()
     train_day = (today + timedelta(days=30)).isoformat()   # inside the 60-day window
     cab_day = (today + timedelta(days=45)).isoformat()
+    flight_day = (today + timedelta(days=30)).isoformat()
 
     await run("hotel_search", mmt_hotel_search(city="Kochi", check_in=ci,
                                                check_out=co, limit=3, fresh=True))
@@ -477,6 +478,11 @@ async def mmt_selftest(quick: bool = False, fresh: bool = True) -> dict:
         await run("cab_quote", mmt_cab_quote(origin="kochi", dest="rameswaram",
                                              date=cab_day, fresh=True))
         await run("station_city", mmt_station_city(origin="MDU", dest="MS", fresh=True))
+        # Last, and only in the full run: a flight search drives a real page and is
+        # the slowest thing here by an order of magnitude.
+        await run("flight_search", mmt_flight_search(origin="BLR", dest="COK",
+                                                     date=flight_day, adults=1,
+                                                     fresh=True))
 
     passed = sum(1 for c in checks if c["ok"])
     return {"passed": passed, "total": len(checks), "checks": checks,

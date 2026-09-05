@@ -8,7 +8,7 @@ workspace. It is self-contained; everything it references is in the repo.
 ## 0. Read this first
 
 This is **not a greenfield build.** A working reference implementation is already here, with
-63 offline tests passing and the MCP protocol verified end to end. Your job is to finish the
+112 offline tests passing and the MCP protocol verified end to end. Your job is to finish the
 parts that could not be completed without live network access from a residential connection,
 verify the whole thing against the real site, and package it for the user's host.
 
@@ -73,10 +73,10 @@ plainly rather than silently swallowed.
 | `mmt/fetch.py::_t2_post` | **New (BUG-3 fix)**: clear_cookies → goto HOME → in-page `fetch` POST with browser-managed headers stripped. The only hotel-POST path from this network |
 | `mmt/harvest.py` — cab place harvesting | **Verified live (BUG-5/6 fixes)**: dismisses login modal, clicks the from-city label, types into the react-autosuggest overlay, captures `autocomplete/v3` responses, prefers regional matches |
 | `mmt/flights.py` — `parse_stream` | **Field names inferred. UNPROVEN — and currently UNREACHABLE from automation.** See BUG-7. |
-| `tests/test_parsers.py` | **78 assertions, all passing**, no network or browser needed |
+| `tests/test_parsers.py` | **112 assertions, all passing**, no network or browser needed |
 | `tools/probe.py` | Live gate harness — superseded by `harness/LIVE-TEST-PLAN.md` + the Cline registered server |
 
-Run `python tests/test_parsers.py` before touching anything. If it is not 78/78, fix that
+Run `python tests/test_parsers.py` before touching anything. If it is not 112/112, fix that
 first: something in the environment is wrong.
 
 **All of Phase 1's original checklist is now done except flights.** The bug log,

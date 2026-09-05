@@ -1,5 +1,11 @@
 # ClaudeCode prompt — finish Phase 1 (flights) and verify
 
+> **COMPLETED 2026-09-04.** Phase 1 is closed: flights (BUG-7) and the cab quote (BUG-8)
+> both work live, and the run found BUG-9 and BUG-10 on the way. Results are in
+> `findings.md` under `## Run 2026-09-04`. Neither documented unblock path was the answer
+> — see that entry for what actually turned out to be wrong. Kept for the record; the
+> live protocol is `LIVE-TEST-PLAN.md` and the next step is `PHASE2-TASKS.md`.
+
 This file is the handoff to a ClaudeCode session for the `makemytrip-mcp` repository. Paste
 the block below into ClaudeCode with this repo as the working directory. It is self-contained.
 
@@ -21,7 +27,7 @@ never exercised. Commit after each passing gate, naming the gate in the message.
 
 ### Ground truths to verify (should all still pass)
 
-1. `python tests/test_parsers.py` → 78/78, no network, no browser.
+1. `python tests/test_parsers.py` → 112/112, no network, no browser.
 2. `mmt_setup_status` → `ready: true`, `headless: false`.
 3. `mmt_hotel_search("goa", "<today+100ish>", "+6 nights", 2)` → priced hotels, base+tax=all-in,
    `tier_used: 2`. (T2 in-page POST works.)

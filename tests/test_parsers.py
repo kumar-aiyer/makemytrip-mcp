@@ -169,6 +169,18 @@ def test_cab_urls() -> None:
 
 
 
+def test_train_bad_date() -> None:
+    for fn, label in ((TR.in_window, "in_window"), (TR.booking_opens, "booking_opens")):
+        try:
+            fn("not-a-date")
+            check(f"train: {label} rejects a non-ISO date", False)
+        except BadInput:
+            check(f"train: {label} rejects a non-ISO date as bad_input", True)
+        except Exception as e:
+            check(f"train: {label} rejects a non-ISO date as bad_input", False,
+                  type(e).__name__)
+
+
 # --------------------------------------------------------------------- flights
 
 def test_flight_airports() -> None:
@@ -378,7 +390,7 @@ def test_null_prices_through_fetch() -> None:
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
-               test_cabs, test_cab_urls, test_flight_airports,
+               test_cabs, test_cab_urls, test_train_bad_date, test_flight_airports,
                test_flight_urls, test_flight_stream, test_flight_stream_junk,
                test_router, test_validators,
                test_recover_gating, test_null_prices_through_fetch):

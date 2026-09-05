@@ -20,7 +20,7 @@ Runs anywhere that speaks MCP over stdio: **Claude Cowork** (as a plugin), **Ope
 | `mmt_find_hotel_id` | Property name → MakeMyTrip hotelId |
 | `mmt_hotel_rates` | One property → every room type and rate plan, with meal plan and cancellation |
 | `mmt_price_itinerary` | A multi-stop trip → per-leg table **and a total summed server-side** |
-| `mmt_flight_search` | Route + date → fares *(experimental — see note below)* |
+| `mmt_flight_search` | Route + date → fares per adult, base/tax apart *(slow — see note below)* |
 | `mmt_train_search` | Route + date → trains with live per-class waitlist status, fare, confirmation odds |
 | `mmt_station_city` | Station codes → city codes, tying a rail leg to its hotel |
 | `mmt_cab_quote` | Two places + date → every vehicle class, base/tax/all-in **and per-km**; optional `return_date` for round trips |
@@ -64,6 +64,11 @@ in-page-fetch POST path for the hotel JSON API:
 | 2 | Full page render | Bot-check interstitials, and driving forms |
 | 2-POST | Full render + in-page `fetch()` | The hotel search JSON API from this network (T1's POST is Akamai-stubbed) |
 
+The browser is **started as an ordinary process and attached to over the DevTools
+protocol**, not launched by Playwright. On this network that is the difference between a
+cab listing and a 169-byte stub; where no Chrome or Edge exists the server falls back to
+Playwright's own launcher.
+
 Tier 1 is the design's centre of gravity: it issues requests through a real Chromium without
 paying for rendering, which is what makes an approach that would otherwise be blocked both
 reliable *and* fast. Architecture and rationale: **[docs/DESIGN.md](docs/DESIGN.md)**.
@@ -83,18 +88,25 @@ Documented at length in [docs/RUNBOOK.md](docs/RUNBOOK.md); the short version:
   ahead. Cab pricing has no such limit — dates months out quote fine.
 - **`availablityStatus`** is misspelled in MakeMyTrip's payload. Correcting it yields `None`
   for every train.
-- **Flights are currently blocked from automation on this machine.** The search-stream API
-  demands a session-generated auth token plus a header set that only a real user's browser
-  session can obtain (CORS preflight grant). `mmt_flight_search` returns an honest `blocked`
-  result naming the cause. Two unblock paths exist (same-profile manual warm, or a captured
-  fixture) — see `harness/findings.md` BUG-7.
+- **A flight search takes 30–60 seconds.** The flights API cannot be called directly — it
+  gates on a session-generated token — so the server does what a person does: it drives the
+  site's own search and reads the response the page receives. Ask for one route and date at
+  a time. Everything else here answers in seconds.
+- **Results routes need their funnel page first.** `/cabs/listing` and `/flight/search`
+  answer a cold visit with a 169-byte stub whose body is the string `200-OK`. Loading
+  `/cabs/` or `/flights/` first in the same page gets the real thing. This cost two bugs
+  (BUG-7, BUG-8) before it was understood.
+- **Flight results include nearby airports.** A Goa search returns itineraries into GOX
+  (Mopa) and Sindhudurg as well as GOI. Each carries its own `from`/`to`, and anything
+  landing elsewhere is flagged `alternate_airport` — not a fare into the airport you asked
+  for.
 - **Goa is two airports on MMT.** Goa (North) = GOX (Mopa), Goa (South) = GOI (Dabolim).
-  The flights tool currently maps `goa` → `GOI`.
+  Bare `goa` maps to `GOI`; say `goa north` or `mopa` for GOX.
 
 ## Tests
 
 ```bash
-python tests/test_parsers.py   # 78 assertions, no network and no browser needed
+python tests/test_parsers.py   # 112 assertions, no network and no browser needed
 python tools/probe.py          # live gates
 ```
 

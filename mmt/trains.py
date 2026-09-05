@@ -50,7 +50,13 @@ def booking_opens(iso_date: str) -> str:
 
 
 def in_window(iso_date: str, today: date | None = None) -> bool:
-    d = date.fromisoformat(iso_date)
+    try:
+        d = date.fromisoformat(iso_date)
+    except ValueError:
+        # in_window runs before any fetch, so an unparseable date reached the caller
+        # as a raw ValueError - kind "unexpected" - rather than as bad_input.
+        raise BadInput("date must be ISO YYYY-MM-DD",
+                       hint=f"Got {iso_date!r}. Example: 2026-12-15.") from None
     t = today or date.today()
     return 0 <= (d - t).days <= ARP_DAYS
 

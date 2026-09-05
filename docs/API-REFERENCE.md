@@ -136,14 +136,65 @@ os: desktop  src: mmt  language: eng  currency: INR  region: in
 The ids are unsigned: a synthetic UUID trio turns a 403 into a 200 on the sibling
 `www.makemytrip.com/flightsCB/api/flights-search/autosuggest`.
 
-In a browser **page** the `app-ver` header trips CORS preflight on the cross-origin host.
-Playwright's `context.request` is not a page origin, so it is not subject to CORS — this is
-why tier 1 can complete a search that in-page JavaScript cannot.
+> **This endpoint cannot be called by this program, by any tier.** An earlier draft of this
+> section claimed tier 1 could complete a search that in-page JavaScript cannot. It cannot:
+> `ctx.request` is Akamai-denied at the network layer. Nor can an in-page fetch (CORS
+> preflight), nor a bare fetch (403 `Missing Header app-ver`). The endpoint also wants a
+> session-generated `authorization` token. The working path is to let the *site* call it and
+> read the response the page receives — `harvest.harvest_flight_search`.
 
-The response is a **stream of concatenated JSON documents**, not one object. The itinerary
-field names in `mmt/flights.py` are **inferred and unproven**; capture a real payload and
-rewrite `parse_stream` from it. Siblings: `/api/fareCalendar`, `/api/postSearch`,
-`/api/client-config`.
+### The response is Server-Sent Events, and the frames are gzip
+
+Verified against a real 114 KB capture (BLR-GOI, 2026-12-15). Not one JSON object, and not
+a run of concatenated ones either:
+
+```
+id: HANDSHAKE
+event: response-headers
+data: {"App-Ver":["1.0.0"],"Currency":["INR"], ...}      <- plain JSON
+
+id: 2
+event: response
+data: H4sIAAAAAAAE/...                                   <- base64(gzip(JSON))
+
+id: END
+```
+
+Decode each `data:` value with base64 then gzip. The results document:
+
+```jsonc
+"cardList": [[                       // a list of card GROUPS, each a list of cards
+  {"flightNumber": "6E 6554",
+   "simpleAirlineHeading": {"cd": "6E-6554", "nm": "IndiGo"},
+   "fare": 4367,                     // all-in, PER ADULT
+   "fareBreakup": {"fareBreakUpItems": [
+      {"text": "<font ...>TOTAL</font>",     "amount": "<font ...>₹ 4,367</font>"},
+      {"text": "<font ...>Base Fare</font>", "amount": "<font ...>₹ 3,222</font>"},
+      {"text": "<font ...>Surcharges</font>","amount": "<font ...>₹ 1,145</font>"}]},
+   "journeyKeys": ["BLR$GOI$2026-12-15 19:00$6E-6554"]}   // -> journeyMap
+]],
+"journeyMap": {
+  "BLR$GOI$2026-12-15 19:00$6E-6554": {
+     "depTime": "19:00", "arrTime": "20:20",
+     "depCityCd": "BLR", "arrCityCd": "GOI", "stops": 0,
+     "flightDuration": "<font color='#757575'>01h 20m</font>",
+     "depTimeStampStr": "15 Dec", "arrTimeStampStr": "15 Dec"}}
+```
+
+> **Display strings are HTML.** Airline names, durations and every rupee figure arrive
+> wrapped in `<font>` tags. Strip them, and read the amount out of the text.
+
+> **`fare` is per adult.** The same flight quotes identically at `A-1` and `A-2` — measured,
+> not assumed. Base and surcharges come from `fareBreakup`; `base + surcharges == fare`.
+
+> **A search answers with nearby airports too.** BLR-GOI returns itineraries into GOX (Mopa)
+> and SDW (Sindhudurg). Read `arrCityCd` per itinerary rather than assuming the one searched.
+
+Goa is two airports: **GOI** Goa (South), Dabolim, and **GOX** Goa (North), Manohar/Mopa.
+Note that `GOA` is Genoa, Italy, and MakeMyTrip's own autosuggest offers it for the query
+"goa" — which is exactly how a three-letter fallback silently prices the wrong continent.
+
+Siblings: `/api/fareCalendar`, `/api/postSearch`, `/api/client-config`.
 
 ---
 
@@ -218,6 +269,13 @@ Cookieless, 200. Doubles as a station-code validator. No station autosuggest exi
 
 ## 5. Cabs
 
+> **Reaching this page at all.** A cold visit to `/cabs/listing` returns 169 bytes whose
+> body is the string `200-OK` — an Akamai stub, regardless of cookies, profile or query
+> string (even the bare path with no parameters). Two conditions each have to hold: the
+> browser must be started as an ordinary process and attached to over CDP rather than
+> launched by Playwright, and `/cabs/` must be loaded first in the same page. The same is
+> true of `/flight/search`. `/railways/listing` is not fussy.
+
 ```
 GET https://www.makemytrip.com/cabs/listing
     ?tripType=OW                 # OW one-way, RT round trip
@@ -230,8 +288,11 @@ GET https://www.makemytrip.com/cabs/listing
 Same RSC mechanism as trains.
 
 **`fromCity` / `toCity` appear in browser URLs and are redundant** — dropping both changes
-nothing. `from` / `to` are not: a trimmed object, or one missing `place_id`, returns **zero
-cabs with HTTP 200**. Required shape:
+nothing. (The site itself now builds `fromCity`/`toCity` when you click Search; `from`/`to`
+still work and are what this server sends.) `from` / `to` are not redundant: a trimmed
+object, or one missing `place_id`, returns **zero cabs with HTTP 200**. A harvested object
+carrying only `place_id`, `address`, `main_text`, `secondary_text` and the two booleans is
+enough in practice — verified live — though the site's own object is fuller:
 
 ```json
 {"locusV2Id":"CTCOK","locusV2Type":"CITY","address":"Cochin, Kerala, India",
@@ -263,8 +324,11 @@ distance. Distance and duration parse out of `summaryText`.
 
 **No booking window.** The ~60-day limit users see is the website's date picker, not the
 endpoint — dates months out quote fine, typically at a seasonal premium with fewer vendors
-bidding. No cab location autosuggest exists (`/locations/autosuggest/`, `/locations/search/`
-404), so place objects must be harvested from the search form.
+bidding. No cab location autosuggest exists at the paths one would guess (`/locations/autosuggest/`,
+`/locations/search/` both 404) — the real one is
+`cabs.makemytrip.com/autocomplete/v3?query=…&requestFor=from|to`, and
+`cabs.makemytrip.com/fetchLocation/v3?place_id=…` returns the full object for a place the
+autocomplete named. Place objects are harvested by driving the search form.
 
 Local 8hr/80km day packages are a different funnel keyed by `packageKey` — not implemented.
 

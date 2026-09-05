@@ -31,19 +31,19 @@ Politeness: one call at a time, no loops, no scheduled polling. This whole proto
 
 7. `mmt_train_search(origin="Bengaluru", dest="goa", date="2026-12-15")`
    - **DONE**: not_in_window, route SBC-MAO, booking_opens=2026-10-16. (BUG-4 fixed.)
-8. `mmt_station_city(origin="SBC", dest="MAO")` → **TO DO**: confirm city codes flow.
+8. `mmt_station_city(origin="SBC", dest="MAO")` → **DONE**: CTBLR / CTGOI.
 9. `mmt_cab_find_place(query="goa")` and `("Panaji")`
    - **DONE**: places registered. (BUG-5/6 fixed.)
 10. `mmt_cab_quote(origin="bengaluru", dest="goa", date="<today+60..200>")`
-    - **TO DO (handed to Phase 1 closure)**: places are registered; the quote was never run.
-    - Verify `cab_count > 0`, `distance_km` present, `base + tax_fees == all_in`, per-km.
-    - Zero cabs for a real route inside the window = BUG (log as BUG-8).
+    - **DONE 2026-09-04**: 10 cabs, 603 km, base + tax_fees == all_in, per-km derived,
+      cheapest 12,161 all-in. Getting there took BUG-8 (the listing route was stubbed).
 
-## Phase 2b — Flights (the open item, BUG-7)
+## Phase 2b — Flights (was the open item, BUG-7)
 
-- `mmt_flight_search(origin="BLR", dest="GOI", date="2026-12-15")` → **DONE (blocked)**:
-  returns an honest blocked/experimental result. Unblock paths in
-  `harness/CLAUDECODE-PHASE1.md` (manual profile warm) or a captured fixture.
+- `mmt_flight_search(origin="BLR", dest="GOI", date="2026-12-15")` → **DONE 2026-09-04**:
+  25 live itineraries, base and tax apart, per adult, cheapest nonstop into GOI 4,367.
+  Allow 30-60 s - the search drives a real page. Check that itineraries flagged
+  `alternate_airport` (GOX, SDW) are not read as fares into GOI.
 
 ## Phase 3 — Error taxonomy
 
@@ -53,7 +53,8 @@ Politeness: one call at a time, no loops, no scheduled polling. This whole proto
 12. `mmt_cab_quote(origin="kochi", dest="rameswaram", date="<ok>", trip_type="RT")`
     without `return_date` → kind `bad_input`.
 13. After each error, the server must still respond to a normal call (alive check).
-    → Mostly covered across the live work; sweep again at Phase 2 close.
+    → **DONE 2026-09-04**: full sweep passed. It found BUG-10 (a non-ISO train date
+      surfaced as kind `unexpected` instead of `bad_input`), now fixed.
 
 ## Phase 4 — Claude-shaped composite (the acceptance test)
 

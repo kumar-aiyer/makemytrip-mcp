@@ -7,16 +7,18 @@ fresh Cline session** orchestrates the MCP into a polished, honest, priced itine
 ## Prerequisites
 
 - [ ] `makemytrip` server registered in Cline's MCP config, tools visible (restart MCP if not).
-- [ ] Phase 1 green: hotels (T2), trains (SBC-MAO + not_in_window), cabs (places registered:
-      goa, panaji, kochi, rameswaram; Bengaluru to be added in Phase 1 close).
-- [ ] Flights either resolved (BUG-7 closed) or explicitly documented as a limitation the
-      model must disclose (BUG-7 open) - either is an acceptable precondition.
+- [x] Phase 1 green (2026-09-04): hotels (T2), trains (SBC-MAO + not_in_window), cabs
+      (10 quotes Bengaluru-Goa; places registered: bengaluru, goa, panaji, kochi,
+      rameswaram), flights (25 live itineraries).
+- [x] Flights resolved - BUG-7 closed. The model gets real fares, so the flight leg is no
+      longer the gap-recovery trigger; **the train booking window is** (Dec 15 is outside
+      the 60-day window until 2026-10-16).
 
 ## Step 1 — Pre-flight (2 minutes)
 
 1. `mmt_setup_status` → `ready: true`.
 2. `mmt_capabilities` → confirm the model will read the `known_gaps` and `cannot` lists.
-3. `python tests/test_parsers.py` → 78/78 (offline baseline intact).
+3. `python tests/test_parsers.py` → 112/112 (offline baseline intact).
 
 ## Step 2 — Run the canonical prompt (the test itself)
 
@@ -31,8 +33,10 @@ The model should:
 - **Trains**: `mmt_train_search("Bengaluru", "goa", "2026-12-15")` returns `not_in_window`
   with `booking_opens: 2026-10-16` and route `SBC-MAO`. It must report the window, not invent
   fares. It may optionally web-research indicative fares IF labeled as web estimates (GR3).
-- **Flights**: if BUG-7 is open, `mmt_flight_search` blocks. The model MUST disclose this and
-  either web-research labeled fares or omit.
+- **Flights**: `mmt_flight_search("Bengaluru", "goa", "2026-12-15")` returns live fares,
+  per adult, base and tax apart - allow 30-60 s. It also returns nearby airports; anything
+  flagged `alternate_airport` (GOX Mopa, SDW Sindhudurg) is not a fare into GOI and must
+  not be presented as one.
 - **Cabs**: `mmt_cab_quote("Bengaluru", "goa", "2026-12-15")` if the places were registered.
 - **Hotels**: `mmt_hotel_search("goa", "2026-12-15", "2026-12-21", 2)` gives stay totals;
   per-night = total/6.
@@ -52,7 +56,8 @@ Run every gate against the transcript. The full checklist lives in
 - H2 train line says booking opens 2026-10-16 (no invented fare).
 - H3 food/activities/sights marked "estimate - outside MakeMyTrip data".
 - H4 local-transport limitation disclosed (known_gaps).
-- H5 flight limitation disclosed if BUG-7 open (experimental/blocked).
+- H5 flight fares labeled per adult; no `alternate_airport` itinerary quoted as a
+  fare into GOI.
 - H6 every MCP number traceable to a transcript tool call (spot-check 3).
 - H7 fetched_at / staleness disclaimer on prices.
 
