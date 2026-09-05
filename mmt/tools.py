@@ -220,9 +220,16 @@ async def mmt_flight_search(origin: str, dest: str, date: str, adults: int = 2,
                             fresh: bool = False) -> dict:
     """Search flights on a route for one date.
 
-    EXPERIMENTAL: the response is a stream whose itinerary field names are inferred
-    rather than verified. If nothing parses, the result returns raw_head so the parser
-    can be corrected - it will not silently claim there are no flights.
+    Fares are per adult, with base and tax separate, sorted cheapest first. Each
+    itinerary carries its own `from`/`to`: MakeMyTrip answers with nearby airports
+    too, and any itinerary not landing at `dest` is flagged `alternate_airport`.
+
+    SLOW BY CONSTRUCTION (~40 s). The flights API cannot be called directly, so this
+    drives the site's own search and reads the response the page receives. Prefer one
+    call per route and date; the result is cached for 20 minutes.
+
+    Goa is two airports: GOI (South, Dabolim) and GOX (North, Mopa). Bare "goa"
+    means GOI.
     """
     o, d = FL.resolve_airport(origin), FL.resolve_airport(dest)
     return await FL.search(o, d, date, adults=adults, children=children,
@@ -360,9 +367,11 @@ async def mmt_capabilities() -> dict:
             "train_search": "trains with live per-class availability",
             "cab_quote": "outstation cabs by vehicle class",
             "station_city": "station code to city code",
+            "flight_search": "fares per adult, base and tax apart, cheapest first - "
+                             "but SLOW (~30-60 s) and it answers with nearby airports "
+                             "as well as the one asked for",
         },
         "experimental": {
-            "flight_search": "endpoint mapped; itinerary field names inferred",
             "cab_find_place": "drives the search form; falls back to a pasted URL",
         },
         "booking_windows": {
@@ -376,6 +385,7 @@ async def mmt_capabilities() -> dict:
         "pricing_conventions": {
             "currency": "INR",
             "hotels": "stay totals for the whole range, not per night",
+            "flights": "per adult, one way, for the cabin searched",
             "split": "base, tax and all-in are always reported separately",
         },
         "known_gaps": [
@@ -384,6 +394,14 @@ async def mmt_capabilities() -> dict:
             "the same as sold out.",
             "Local 8hr/80km cab day packages use a different funnel and are not built.",
             "Holiday packages are quoted per enquiry and are not searchable.",
+            "A flight search takes ~30-60 s: the API cannot be called directly, so the "
+            "server drives the site's own search page. Ask for one route and date at "
+            "a time rather than sweeping a month.",
+            "A flight search also returns nearby airports (a Goa search includes GOX "
+            "and Sindhudurg). Itineraries not landing at the requested airport carry "
+            "alternate_airport: true - do not quote them as fares into it.",
+            "Goa is two airports: GOI (South, Dabolim) and GOX (North, Mopa). Bare "
+            "'goa' means GOI.",
         ],
         "cannot": {
             "booking": "deliberately absent - this server has no booking, cart, "

@@ -1,0 +1,180 @@
+{
+ "cardList": [
+  [
+   {
+    "flightNumber": "IC 5302",
+    "simpleAirlineHeading": {
+     "cd": "IC-5302",
+     "nm": "FLY91",
+     "ic": ""
+    },
+    "airlineCodes": [
+     "IC"
+    ],
+    "fareBreakup": {
+     "title": "Fare breakup",
+     "fareBreakUpItems": [
+      {
+       "text": "<font style='font-size:14px; color:#000'>TOTAL</font>",
+       "textD": "",
+       "amount": "<font style='font-size:14px; color:#000'>₹ 3,099</font>",
+       "preSelected": false,
+       "cta": null
+      },
+      {
+       "text": "<font style='color:#878787'>Base Fare</font>",
+       "textD": "",
+       "amount": "<font style='color:#878787'>₹ 3,099</font>",
+       "preSelected": false,
+       "cta": null
+      },
+      {
+       "text": "<font style='color:#878787'>Surcharges</font>",
+       "textD": "",
+       "amount": "<font style='color:#878787'>₹ 0</font>",
+       "preSelected": false,
+       "cta": null
+      }
+     ]
+    },
+    "finalFare": "₹ 3,099",
+    "fare": 3099,
+    "journeyKeys": [
+     "BLR$SDW$2026-12-15 11:40$IC-5302"
+    ],
+    "minDur": 105,
+    "duration": "1 hr 45 mins "
+   },
+   {
+    "flightNumber": "IX 1548, IX 1051",
+    "simpleAirlineHeading": {
+     "cd": "IX-1548 | IX-1051",
+     "nm": "Air India Express",
+     "ic": ""
+    },
+    "airlineCodes": [
+     "IX"
+    ],
+    "fareBreakup": {
+     "title": "Fare breakup",
+     "fareBreakUpItems": [
+      {
+       "text": "<font style='font-size:14px; color:#000'>TOTAL</font>",
+       "textD": "",
+       "amount": "<font style='font-size:14px; color:#000'>₹ 14,453</font>",
+       "preSelected": false,
+       "cta": null
+      },
+      {
+       "text": "<font style='color:#878787'>Base Fare</font>",
+       "textD": "",
+       "amount": "<font style='color:#878787'>₹ 12,629</font>",
+       "preSelected": false,
+       "cta": null
+      },
+      {
+       "text": "<font style='color:#878787'>Surcharges</font>",
+       "textD": "",
+       "amount": "<font style='color:#878787'>₹ 1,824</font>",
+       "preSelected": false,
+       "cta": null
+      }
+     ]
+    },
+    "finalFare": "₹ 14,453",
+    "fare": 14453,
+    "journeyKeys": [
+     "BLR$BOM$2026-12-15 17:00$IX-1548|BOM$GOI$2026-12-15 20:35$IX-1051"
+    ],
+    "minDur": 300,
+    "duration": "5 hrs"
+   },
+   {
+    "flightNumber": "6E 309",
+    "simpleAirlineHeading": {
+     "cd": "6E-309",
+     "nm": "IndiGo",
+     "ic": ""
+    },
+    "airlineCodes": [
+     "6E"
+    ],
+    "fareBreakup": {
+     "title": "Fare breakup",
+     "fareBreakUpItems": [
+      {
+       "text": "<font style='font-size:14px; color:#000'>TOTAL</font>",
+       "textD": "",
+       "amount": "<font style='font-size:14px; color:#000'>₹ 5,193</font>",
+       "preSelected": false,
+       "cta": null
+      },
+      {
+       "text": "<font style='color:#878787'>Base Fare</font>",
+       "textD": "",
+       "amount": "<font style='color:#878787'>₹ 3,446</font>",
+       "preSelected": false,
+       "cta": null
+      },
+      {
+       "text": "<font style='color:#878787'>Surcharges</font>",
+       "textD": "",
+       "amount": "<font style='color:#878787'>₹ 1,747</font>",
+       "preSelected": false,
+       "cta": null
+      }
+     ]
+    },
+    "finalFare": "₹ 5,193",
+    "fare": 5193,
+    "journeyKeys": [
+     "BLR$GOX$2026-12-15 15:30$6E-309"
+    ],
+    "minDur": 80,
+    "duration": "1 hr 20 mins "
+   }
+  ]
+ ],
+ "journeyMap": {
+  "BLR$SDW$2026-12-15 11:40$IC-5302": {
+   "depTime": "11:40",
+   "depCity": "<font color='#000000'>Bengaluru</font>",
+   "arrTime": "13:25",
+   "arrCity": "<b><font color='#000000'><b>Sindhudurg</b></font></b>",
+   "depTimeStampStr": "15 Dec",
+   "arrTimeStampStr": "15 Dec",
+   "depCityCd": "BLR",
+   "arrCityCd": "SDW",
+   "flightDuration": "<font color='#757575'>01h 45m</font>",
+   "stops": 0
+  },
+  "BLR$BOM$2026-12-15 17:00$IX-1548|BOM$GOI$2026-12-15 20:35$IX-1051": {
+   "depTime": "17:00",
+   "depCity": "<font color='#000000'>Bengaluru</font>",
+   "arrTime": "22:00",
+   "arrCity": "<font color='#000000'>Goa (South)</font>",
+   "depTimeStampStr": "15 Dec",
+   "arrTimeStampStr": "15 Dec",
+   "depCityCd": "BLR",
+   "arrCityCd": "GOI",
+   "flightDuration": "<font color='#757575'>05h</font>",
+   "stops": 1
+  },
+  "BLR$GOX$2026-12-15 15:30$6E-309": {
+   "depTime": "15:30",
+   "depCity": "<font color='#000000'>Bengaluru</font>",
+   "arrTime": "16:50",
+   "arrCity": "<b><font color='#000000'><b>Goa (North)</b></font></b>",
+   "depTimeStampStr": "15 Dec",
+   "arrTimeStampStr": "15 Dec",
+   "depCityCd": "BLR",
+   "arrCityCd": "GOX",
+   "flightDuration": "<font color='#757575'>01h 20m</font>",
+   "stops": 0
+  }
+ },
+ "meta": {
+  "cardsHeading": "Flights from <b>Bengaluru</b> to <b>Goa (South)</b>",
+  "requestId": "d49a77c9-cf2e-4276-9e3e-116bcaffa901"
+ }
+}

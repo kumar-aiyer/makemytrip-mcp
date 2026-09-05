@@ -1,42 +1,62 @@
 """Flights.
 
-A GET with query parameters, streamed. Gated on three headers (mcid, device-id,
-app-ver) that are NOT signed - a synthetic UUID satisfies them. In a browser page the
-app-ver header trips CORS preflight; tier 1 is not a page origin, so it does not.
+The search-stream endpoint is **Server-Sent Events**, not a run of concatenated JSON
+documents, and each `data:` frame is base64-encoded gzip. The field names here were
+read off a real 114 KB payload captured 2026-09-04 (BLR-GOI, 2026-12-15); the fixture
+in tests/fixtures is a trimmed copy of it.
 
-The response is a stream of concatenated JSON documents, not one object. The itinerary
-field names below are INFERRED and unproven against a live payload - capture_mode=True
-saves the raw stream to a fixture so the parser can be rewritten from reality.
+The API cannot be called directly from this program. It gates on a session-generated
+authorization token plus a header set that only a real user session obtains, and every
+non-page path is Akamai-denied - the evidence chain is in config.py and findings.md
+BUG-7. What does work is what a person does: drive the site's own search form and read
+the response the page itself receives. That is `harvest.harvest_flight_search`, and it
+is why a flight search costs ~40 s rather than ~1 s.
+
+MakeMyTrip answers a search with nearby-airport alternatives too - a BLR-GOI search
+returns itineraries into GOX (Mopa) and even SDW (Sindhudurg). Each itinerary
+therefore carries its own `from`/`to`, and one that does not land at the requested
+airport is flagged rather than quietly counted as a fare for it.
 """
 from __future__ import annotations
 
+import base64
+import gzip
+import html
+import json
+import re
 import time
 import uuid
-from datetime import date
-from typing import Any, Iterator
+from datetime import date, datetime
+from typing import Any
 from urllib.parse import urlencode
 
 from . import config as C
-from . import rsc
-from .errors import BadInput
-from .fetch import get_text
-from .router import FLIGHT_API
+from .errors import BadInput, Blocked, EmptyValid
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_MONEY_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
 def resolve_airport(name: str) -> str:
     n = (name or "").strip()
+    if not n:
+        raise BadInput("airport is required")
+    # Known names always win over the three-letter guess. "goa" is three alpha
+    # characters, and GOA is Genoa, Italy - the same trap BUG-4 fixed for stations.
+    code = C.AIRPORTS.get(n.lower())
+    if code:
+        return code
     if len(n) == 3 and n.isalpha():
         return n.upper()
-    code = C.AIRPORTS.get(n.lower())
-    if not code:
-        raise BadInput(f"unknown airport {name!r}",
-                       hint="Pass an IATA code (BLR, IXE, COK) or one of: " +
-                            ", ".join(sorted(set(C.AIRPORTS))))
-    return code
+    raise BadInput(f"unknown airport {name!r}",
+                   hint="Pass an IATA code (BLR, IXE, COK) or one of: " +
+                        ", ".join(sorted(set(C.AIRPORTS))))
 
 
 def search_url(origin: str, dest: str, iso_date: str, *, adults: int = 2,
                children: int = 0, infants: int = 0, cabin: str = "E") -> str:
+    """The API URL. Kept because it documents the wire contract and is unit-tested;
+    the live path drives the form instead - see the module docstring."""
     try:
         d = date.fromisoformat(iso_date)
     except ValueError:
@@ -53,113 +73,237 @@ def search_url(origin: str, dest: str, iso_date: str, *, adults: int = 2,
     return C.FLIGHT_SEARCH + "?" + urlencode(params)
 
 
-async def search(origin: str, dest: str, iso_date: str, *, adults: int = 2,
-                 children: int = 0, infants: int = 0, cabin: str = "E",
-                 max_results: int = 25, fresh: bool = False) -> dict[str, Any]:
-    url = search_url(origin, dest, iso_date, adults=adults, children=children,
-                     infants=infants, cabin=cabin)
-    res = await get_text(url, ec=FLIGHT_API, headers=C.flight_headers(), fresh=fresh,
-                         timeout=60.0, context_url=C.WWW + "/flights/")
-    itineraries = parse_stream(res.text, max_results)
-    out: dict[str, Any] = {
-        "route": f"{origin.upper()}-{dest.upper()}",
-        "date": iso_date,
-        "pax": f"A-{adults}_C-{children}_I-{infants}",
-        "cabin": cabin,
-        "parsed_count": len(itineraries),
-        "itineraries": itineraries,
-        "raw_len": len(res.text),
-    }
-    if not itineraries:
-        # Not an error: return enough to fix the parser rather than claiming no flights.
-        out["raw_head"] = res.text[:2000]
-        out["warning"] = (
-            "The stream returned data but no itineraries were recognised. The parser's "
-            "field names are inferred, not verified. Save raw_head to "
-            "tests/fixtures/flight_stream.json and rewrite parse_stream from it.")
-    out.update(res.meta())
-    return out
+def page_url(origin: str, dest: str, iso_date: str, *, adults: int = 2,
+             children: int = 0, infants: int = 0, cabin: str = "E") -> str:
+    """The human results URL, so a figure can be cited back to its source."""
+    try:
+        d = date.fromisoformat(iso_date)
+    except ValueError:
+        raise BadInput("date must be ISO YYYY-MM-DD") from None
+    return C.WWW + "/flight/search?" + urlencode({
+        "itinerary": f"{origin.upper()}-{dest.upper()}-{d.strftime('%d/%m/%Y')}",
+        "tripType": "O", "paxType": f"A-{adults}_C-{children}_I-{infants}",
+        "intl": "false", "cabinClass": cabin, "lang": "eng",
+    })
 
 
-def iter_json_objects(text: str) -> Iterator[dict]:
-    """Yield every balanced top-level {...} in the concatenated stream."""
-    i = 0
-    n = len(text)
-    while i < n:
-        j = text.find("{", i)
-        if j < 0:
-            return
-        raw = rsc.balanced(text, j)
-        if not raw:
-            return
-        i = j + len(raw)
-        try:
-            import json
-            yield json.loads(raw)
-        except Exception:
+# --------------------------------------------------------------------- the stream
+
+
+def decode_stream(text: str) -> list[dict[str, Any]]:
+    """SSE frames -> JSON documents.
+
+    Each frame's `data:` value is either plain JSON (the handshake and the loading
+    message) or base64-encoded gzip (every frame carrying results). Anything that
+    decodes to neither is skipped rather than raised on: a partial trailing frame is
+    normal on a stream that was still open when the page stopped reading it.
+    """
+    docs: list[dict[str, Any]] = []
+    for block in re.split(r"\n\s*\n", text):
+        payload = "".join(line[5:].strip() for line in block.splitlines()
+                          if line.startswith("data:"))
+        if not payload:
             continue
+        doc = _decode_frame(payload)
+        if isinstance(doc, dict):
+            docs.append(doc)
+    return docs
 
 
-def _walk(obj: Any) -> Iterator[dict]:
-    if isinstance(obj, dict):
-        yield obj
-        for v in obj.values():
-            yield from _walk(v)
-    elif isinstance(obj, list):
-        for v in obj:
-            yield from _walk(v)
+def _decode_frame(payload: str) -> dict[str, Any] | None:
+    if payload.startswith("{"):
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+    try:
+        return json.loads(gzip.decompress(base64.b64decode(payload)).decode("utf-8"))
+    except Exception:
+        return None
 
 
-def parse_stream(text: str, max_results: int = 25) -> list[dict[str, Any]]:
-    """INFERRED shapes. Replace wholesale once a real payload exists."""
+def parse_stream(text: str, max_results: int = 25, *,
+                 dest: str | None = None) -> list[dict[str, Any]]:
+    return parse_docs(decode_stream(text), max_results, dest=dest)
+
+
+def parse_docs(docs: list[dict[str, Any]], max_results: int = 25, *,
+               dest: str | None = None) -> list[dict[str, Any]]:
+    """Pure. `dest` is the requested arrival airport, used only to flag itineraries
+    that land somewhere else."""
     found: list[dict[str, Any]] = []
-    for doc in iter_json_objects(text):
-        for node in _walk(doc):
-            if not ({"legs", "segments", "flights"} & set(node.keys())):
-                continue
-            fare = _num(node, ("totalFare", "fare", "amount", "price", "displayFare",
-                               "tf"))
-            if fare is None:
-                continue
-            found.append({
-                "fare_inr": fare,
-                "airline": _str(node, ("airlineName", "airline", "carrier",
-                                       "airlineCode")),
-                "flight_no": _str(node, ("flightNumber", "fltNo", "number")),
-                "depart": _str(node, ("departureTime", "depTime", "dt")),
-                "arrive": _str(node, ("arrivalTime", "arrTime", "at")),
-                "duration": _str(node, ("duration", "totalDuration", "dur")),
-                "stops": node.get("stops") if isinstance(node.get("stops"), int) else None,
-            })
+    for doc in docs:
+        journeys = doc.get("journeyMap") or {}
+        for card in _cards(doc):
+            it = _itinerary(card, journeys, dest)
+            if it is not None:
+                found.append(it)
 
     seen: set[tuple] = set()
     out: list[dict[str, Any]] = []
-    for it in sorted(found, key=lambda x: x["fare_inr"]):
-        k = (it["airline"], it["flight_no"], it["depart"], it["fare_inr"])
-        if k in seen:
+    for it in sorted(found, key=lambda x: x["all_in_inr"]):
+        key = (it["flight_no"], it["depart"], it["all_in_inr"])
+        if key in seen:
             continue
-        seen.add(k)
+        seen.add(key)
         out.append(it)
         if len(out) >= max_results:
             break
     return out
 
 
-def _num(node: dict, keys) -> float | None:
-    for k in keys:
-        v = node.get(k)
-        if isinstance(v, (int, float)):
-            return float(v)
-        if isinstance(v, dict):
-            for kk in ("amount", "total", "value", "displayAmount"):
-                if isinstance(v.get(kk), (int, float)):
-                    return float(v[kk])
-    return None
+def _cards(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    """cardList is a list of card *groups*, each itself a list of cards."""
+    out: list[dict[str, Any]] = []
+    for group in doc.get("cardList") or []:
+        if isinstance(group, dict):
+            out.append(group)
+        elif isinstance(group, list):
+            out.extend(c for c in group if isinstance(c, dict))
+    return out
 
 
-def _str(node: dict, keys) -> str | None:
-    for k in keys:
-        v = node.get(k)
-        if isinstance(v, str) and v:
-            return v
-    return None
+def _itinerary(card: dict[str, Any], journeys: dict[str, Any],
+               dest: str | None) -> dict[str, Any] | None:
+    fare = card.get("fare")
+    if not isinstance(fare, (int, float)):
+        return None
+
+    base, tax = _fare_breakup(card)
+    legs = [journeys[k] for k in (card.get("journeyKeys") or []) if k in journeys]
+    first = legs[0] if legs else {}
+    last = legs[-1] if legs else {}
+    # stops within each leg, plus one for every connection between legs
+    stops = (sum(leg.get("stops") or 0 for leg in legs) + max(len(legs) - 1, 0)
+             if legs else None)
+    to_code = last.get("arrCityCd")
+
+    out: dict[str, Any] = {
+        "all_in_inr": float(fare),
+        "base_inr": base,
+        "tax_inr": tax,
+        "airline": _plain((card.get("simpleAirlineHeading") or {}).get("nm")),
+        "flight_no": card.get("flightNumber"),
+        "depart": first.get("depTime"),
+        "arrive": last.get("arrTime"),
+        "duration": _plain(first.get("flightDuration")) or _plain(card.get("duration")),
+        "stops": stops,
+        "from": first.get("depCityCd"),
+        "to": to_code,
+    }
+    if first.get("depTimeStampStr") and last.get("arrTimeStampStr"):
+        out["arrives_next_day"] = first["depTimeStampStr"] != last["arrTimeStampStr"]
+    if dest and to_code and to_code.upper() != dest.upper():
+        # MakeMyTrip volunteers nearby airports. Saying so is the difference between
+        # a cheaper option and a wrong number.
+        out["alternate_airport"] = True
+    return out
+
+
+def _fare_breakup(card: dict[str, Any]) -> tuple[float | None, float | None]:
+    """Base and surcharges, kept apart - a blended figure is against the rules."""
+    items = (card.get("fareBreakup") or {}).get("fareBreakUpItems") or []
+    amounts: dict[str, float] = {}
+    for item in items:
+        label = _plain(item.get("text"))
+        value = _money(item.get("amount"))
+        if label and value is not None:
+            amounts[label.lower()] = value
+    return amounts.get("base fare"), amounts.get("surcharges")
+
+
+def _plain(value: Any) -> str | None:
+    """MakeMyTrip wraps display strings in <font> tags. Strip them."""
+    if not isinstance(value, str):
+        return None
+    text = html.unescape(_TAG_RE.sub("", value))
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or None
+
+
+def _money(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = _plain(value)
+    if not text:
+        return None
+    m = _MONEY_RE.search(text)
+    return float(m.group(0).replace(",", "")) if m else None
+
+
+# ---------------------------------------------------------------------- the search
+
+
+async def search(origin: str, dest: str, iso_date: str, *, adults: int = 2,
+                 children: int = 0, infants: int = 0, cabin: str = "E",
+                 max_results: int = 25, fresh: bool = False) -> dict[str, Any]:
+    """One route, one date. Slow by construction - see the module docstring."""
+    from . import harvest as HV
+    from .cache import CACHE, PRICE_TTL, key as cache_key
+
+    ck = cache_key("FLIGHT", {"o": origin, "d": dest, "date": iso_date,
+                              "pax": (adults, children, infants), "cabin": cabin})
+    if not fresh:
+        hit = CACHE.get(ck)
+        if hit is not None:
+            out = dict(hit["out"])
+            out["cached"] = True
+            out["fetched_at"] = hit["at"]
+            return out
+
+    t0 = time.time()
+    try:
+        raw = await HV.harvest_flight_search(origin, dest, iso_date, adults=adults,
+                                             children=children, infants=infants,
+                                             cabin=cabin)
+    except Blocked:
+        # One retry, on a fresh browser. A flight search is the longest call here and
+        # a browser that went away mid-search is a transient, not a refusal.
+        from .session import SESSION
+        await SESSION.recover()
+        raw = await HV.harvest_flight_search(origin, dest, iso_date, adults=adults,
+                                             children=children, infants=infants,
+                                             cabin=cabin)
+    itineraries = parse_stream(raw, max_results, dest=dest)
+    out: dict[str, Any] = {
+        "route": f"{origin.upper()}-{dest.upper()}",
+        "date": iso_date,
+        "pax": f"A-{adults}_C-{children}_I-{infants}",
+        "cabin": cabin,
+        "fare_basis": ("Fares are as MakeMyTrip lists them, per adult, for the "
+                       "searched cabin. base_inr + tax_inr == all_in_inr."),
+        "parsed_count": len(itineraries),
+        "itineraries": itineraries,
+        "source_url": page_url(origin, dest, iso_date, adults=adults,
+                               children=children, infants=infants, cabin=cabin),
+        "raw_len": len(raw),
+        "tier_used": 2,
+        "elapsed_ms": int((time.time() - t0) * 1000),
+        "cached": False,
+        "fetched_at": _now(),
+    }
+    alt = [i for i in itineraries if i.get("alternate_airport")]
+    if alt:
+        out["note"] = (
+            f"{len(alt)} of these land at a different airport than {dest.upper()} - "
+            "MakeMyTrip volunteers nearby airports. Each itinerary carries its own "
+            "`to`; the ones flagged `alternate_airport` are not fares into "
+            f"{dest.upper()}.")
+
+    if not itineraries:
+        raise EmptyValid(
+            f"No flight itineraries parsed for {origin.upper()}-{dest.upper()} on "
+            f"{iso_date}.",
+            hint=("The search page returned "
+                  f"{len(raw)} bytes of stream. If that is near zero the results page "
+                  "was blocked (see findings.md BUG-7); if it is large the payload "
+                  "shape moved and parse_stream needs re-deriving from a capture."),
+            details={k: out[k] for k in ("route", "date", "pax", "raw_len",
+                                         "source_url")})
+
+    CACHE.put(ck, {"out": out, "at": out["fetched_at"]}, ttl=PRICE_TTL)
+    return out
+
+
+def _now() -> str:
+    return datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")

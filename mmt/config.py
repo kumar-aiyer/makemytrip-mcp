@@ -109,11 +109,17 @@ STATIONS = {
     "vasco da gama": "VSG", "vasco": "VSG",
 }
 
+# MakeMyTrip splits Goa into two airports, confirmed live from its own autosuggest
+# (2026-09-04): GOI "Goa (South) - Dabolim International" and GOX "Goa (North) -
+# Manohar International" (Mopa). Bare "goa" stays GOI - that is the existing
+# contract and the busier airport - but a caller who means Mopa can now say so.
 AIRPORTS = {
     "bengaluru": "BLR", "bangalore": "BLR", "mangalore": "IXE", "mangaluru": "IXE",
     "coimbatore": "CJB", "kochi": "COK", "cochin": "COK", "trivandrum": "TRV",
     "thiruvananthapuram": "TRV", "madurai": "IXM", "chennai": "MAA", "delhi": "DEL",
     "mumbai": "BOM", "goa": "GOI", "hyderabad": "HYD",
+    "goa south": "GOI", "dabolim": "GOI",
+    "goa north": "GOX", "mopa": "GOX", "manohar": "GOX",
 }
 
 # --------------------------------------------------------------------------- state
@@ -139,21 +145,6 @@ def load_data() -> dict[str, Any]:
 
 def save_data(data: dict[str, Any]) -> None:
     _write_data(data)
-
-
-def identity() -> str:
-    """One stable client-generated UUID, persisted and reused for every call.
-
-    MakeMyTrip does not sign or validate this - it is a device/visitor id. Keeping it
-    stable makes our traffic look like one browser rather than a swarm.
-    """
-    data = _read_data()
-    did = data.get("device_id")
-    if not did:
-        did = str(uuid.uuid4())
-        data["device_id"] = did
-        _write_data(data)
-    return did
 
 
 # ------------------------------------------------------------------------- headers

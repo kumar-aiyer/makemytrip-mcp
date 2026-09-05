@@ -169,3 +169,70 @@ def _walk(obj: Any):
     elif isinstance(obj, list):
         for v in obj:
             yield from _walk(v)
+
+
+async def harvest_flight_search(origin: str, dest: str, iso_date: str, *,
+                                adults: int = 2, children: int = 0, infants: int = 0,
+                                cabin: str = "E", timeout_ms: int = 90_000) -> str:
+    """Return the raw search-stream body for one flight search.
+
+    The API cannot be called directly (findings.md BUG-7), so this does what a person
+    does: open the flights funnel, then the results page, and read the SSE response
+    the page itself receives. The funnel visit is load-bearing - going straight to
+    /flight/search gets the Akamai "200-ok" stub, exactly as /cabs/listing does.
+
+    The body must be read only after the stream closes; reading a response that is
+    still open yields an empty string.
+    """
+    from . import flights as FL
+
+    responses: list[Any] = []
+
+    async with SESSION.page() as page:
+        def on_response(resp) -> None:
+            if "search-stream" in resp.url:
+                responses.append(resp)
+
+        page.on("response", on_response)
+        await page.goto(C.WWW + "/flights/?cc=IN&lang=eng",
+                        wait_until="domcontentloaded", timeout=timeout_ms)
+        await page.wait_for_timeout(6000)
+        await _dismiss_popups(page)
+
+        url = FL.page_url(origin, dest, iso_date, adults=adults, children=children,
+                          infants=infants, cabin=cabin)
+        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+
+        best = ""
+        done: set[int] = set()
+        deadline = timeout_ms / 1000.0
+        waited = 0.0
+        while waited < deadline:
+            try:
+                await page.wait_for_timeout(2500)
+            except Exception as e:
+                # The browser can go away under a long search. Keep whatever the
+                # stream already delivered; the caller decides if it is enough.
+                if "closed" not in str(e).lower():
+                    raise
+                raise Blocked(
+                    "The browser closed during the flight search.",
+                    hint="A flight search drives a real page for up to a minute and is "
+                         "the longest call this server makes. Retry once; if it keeps "
+                         "happening, mmt_setup_status will say whether the browser is "
+                         "healthy.") from None
+            waited += 2.5
+            for resp in list(responses):
+                # Awaiting the same response twice spawns a second waiter that
+                # outlives the page and logs a stray "Target closed".
+                if id(resp) in done:
+                    continue
+                done.add(id(resp))
+                with contextlib.suppress(Exception):
+                    await resp.finished()
+                    body = await resp.text()
+                    if len(body) > len(best):
+                        best = body
+            if len(best) > 20_000:
+                break
+        return best

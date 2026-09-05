@@ -12,11 +12,12 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from mmt import cabs as CB          # noqa: E402
+from mmt import flights as FL       # noqa: E402
 from mmt import hotels as HO        # noqa: E402
 from mmt import rsc                 # noqa: E402
 from mmt import state as ST         # noqa: E402
 from mmt import trains as TR        # noqa: E402
-from mmt.errors import NullPrices   # noqa: E402
+from mmt.errors import BadInput, NullPrices   # noqa: E402
 from mmt.router import (Router, Tier, HOTEL_API, TRAIN_PAGE)   # noqa: E402
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
@@ -167,6 +168,88 @@ def test_cab_urls() -> None:
               "mmt_cab_add_place" in str(getattr(e, "hint", "")))
 
 
+
+# --------------------------------------------------------------------- flights
+
+def test_flight_airports() -> None:
+    check("flight: goa resolves to GOI, not the alpha-code guess GOA (Genoa)",
+          FL.resolve_airport("goa") == "GOI", FL.resolve_airport("goa"))
+    check("flight: goa north is GOX (Mopa)", FL.resolve_airport("goa north") == "GOX")
+    check("flight: mopa is GOX", FL.resolve_airport("mopa") == "GOX")
+    check("flight: an unknown three-letter code still passes through",
+          FL.resolve_airport("IXE") == "IXE")
+    try:
+        FL.resolve_airport("nowhere city")
+        check("flight: unknown airport raises", False)
+    except BadInput as e:
+        check("flight: unknown airport lists what is known", "BLR" in str(e.hint))
+
+
+def test_flight_urls() -> None:
+    u = FL.search_url("BLR", "GOI", "2026-12-15")
+    check("flight: api url uses YYYYMMDD", "it=BLR-GOI-20261215" in u, u)
+    p = FL.page_url("BLR", "GOI", "2026-12-15", adults=2)
+    check("flight: page url uses DD/MM/YYYY",
+          "itinerary=BLR-GOI-15%2F12%2F2026" in p, p)
+    check("flight: page url carries pax", "paxType=A-2_C-0_I-0" in p)
+
+
+def test_flight_stream() -> None:
+    """Fields verified against a real 114 KB capture (BLR-GOI, 2026-12-15)."""
+    sse = (FIX / "flight_stream.sse").read_text(encoding="utf-8")
+    docs = FL.decode_stream(sse)
+    check("flight: SSE frames decode (base64 gzip)", len(docs) == 3, str(len(docs)))
+    check("flight: the results frame carries cardList and journeyMap",
+          any("cardList" in d and "journeyMap" in d for d in docs))
+
+    its = FL.parse_stream(sse, dest="GOI")
+    check("flight: itineraries parsed", len(its) == 3, str(len(its)))
+    check("flight: sorted cheapest first",
+          [i["all_in_inr"] for i in its] == sorted(i["all_in_inr"] for i in its))
+
+    by_no = {i["flight_no"]: i for i in its}
+    nonstop = by_no.get("6E 309", {})
+    check("flight: fare", nonstop.get("all_in_inr") == 5193.0)
+    check("flight: base and tax kept apart",
+          nonstop.get("base_inr") == 3446.0 and nonstop.get("tax_inr") == 1747.0)
+    check("flight: airline name, tags stripped", nonstop.get("airline") == "IndiGo")
+    check("flight: flight number", nonstop.get("flight_no") == "6E 309")
+    check("flight: depart", nonstop.get("depart") == "15:30")
+    check("flight: arrive", nonstop.get("arrive") == "16:50")
+    check("flight: duration, tags stripped", nonstop.get("duration") == "01h 20m")
+    check("flight: stops", nonstop.get("stops") == 0)
+    check("flight: from/to airport codes",
+          nonstop.get("from") == "BLR" and nonstop.get("to") == "GOX")
+
+    connecting = by_no.get("IX 1548, IX 1051", {})
+    check("flight: a connection counts one stop", connecting.get("stops") == 1)
+    check("flight: connection arrives at the requested airport",
+          connecting.get("to") == "GOI")
+
+    for it in its:
+        if it["base_inr"] is None or it["tax_inr"] is None:
+            continue
+        check(f"flight: base + tax == all_in ({it['flight_no']})",
+              round(it["base_inr"] + it["tax_inr"], 2) == round(it["all_in_inr"], 2),
+              f"{it['base_inr']} + {it['tax_inr']} vs {it['all_in_inr']}")
+
+    # MakeMyTrip volunteers nearby airports; a GOI search returns GOX and SDW too.
+    check("flight: a different arrival airport is flagged",
+          by_no["6E 309"].get("alternate_airport") is True)
+    check("flight: the requested airport is not flagged",
+          "alternate_airport" not in connecting)
+
+
+def test_flight_stream_junk() -> None:
+    check("flight: empty stream yields no itineraries", FL.parse_stream("") == [])
+    check("flight: a stub body yields no itineraries", FL.parse_stream("200-OK") == [])
+    check("flight: an undecodable data frame is skipped, not raised on",
+          FL.parse_stream("id: 2\nevent: response\ndata: notbase64!!\n\n") == [])
+    doc = json.loads((FIX / "flight_stream.json").read_text(encoding="utf-8"))
+    check("flight: parse_docs works on a decoded document too",
+          len(FL.parse_docs([doc])) == 3)
+
+
 # ---------------------------------------------------------------------- router
 
 def test_router() -> None:
@@ -295,7 +378,9 @@ def test_null_prices_through_fetch() -> None:
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
-               test_cabs, test_cab_urls, test_router, test_validators,
+               test_cabs, test_cab_urls, test_flight_airports,
+               test_flight_urls, test_flight_stream, test_flight_stream_junk,
+               test_router, test_validators,
                test_recover_gating, test_null_prices_through_fetch):
         try:
             fn()
