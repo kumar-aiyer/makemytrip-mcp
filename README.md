@@ -109,8 +109,14 @@ Documented at length in [docs/RUNBOOK.md](docs/RUNBOOK.md); the short version:
 ```bash
 python tests/test_parsers.py   # 112 assertions, no network and no browser needed
 python tests/test_version.py   # mmt_version record + sync against checkout HEAD, also offline
+python tests/test_watch_server.py  # the dev supervisor (relay, restart, give-up), also offline
 python tools/probe.py          # live gates
 ```
+
+For live development, register the server to run `tools/watch_server.py` instead of
+`server.py`: it supervises the child, reloads it on source changes, and restarts it after a
+crash, so code edits behind a stable tool surface need no MCP reconnect. See
+`docs/RUNBOOK.md` → *Developing the server live*.
 
 The offline suite asserts on **structure and arithmetic** (`base + tax == all_in`), never on
 particular prices — those drift daily.

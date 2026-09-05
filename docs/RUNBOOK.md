@@ -18,6 +18,26 @@
    results page will return the `200-OK` stub. Set `MMT_CHROME_PATH` if Chrome lives
    somewhere unusual.
 
+## Developing the server live (watch mode)
+
+When `makemytrip` is registered to run `tools/watch_server.py` instead of `server.py`, the
+host talks to a supervisor that owns the real server as a child:
+
+- The supervisor relays MCP verbatim (line-framed, binary) and restarts the child when it
+  exits or when `server.py` / `mmt/**/*.py` change. The agent can therefore edit the server
+  and have the change loaded with **no reconnect** — a stale build, a crash, or a code edit
+  all converge to "new code is live".
+- **Interface changes are the exception, not the rule.** Adding/renaming a tool or changing
+  a schema changes `tools/list`, which the host snapshots at connect. Those still need one
+  reconnect; after it, `mmt_version` verifies the freshly loaded commit.
+- Diagnostics from both the supervisor (`[watcher]`) and the child appear on stderr. Never
+  let a child write non-JSON to stdout — it shares the protocol stream.
+- If the child cannot stay up (3 exits inside the rapid-failure window), the supervisor
+  logs `giving up` and exits 2 — fix the build, then reconnect.
+
+To register this mode (Cline), point the server's `args` at `tools/watch_server.py`
+keeping the same `env` (`MMT_MCP_HOME`, `PYTHONIOENCODING`, `PYTHONUNBUFFERED`).
+
 ## Symptoms
 
 | Symptom | Cause | Fix |
