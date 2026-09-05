@@ -145,7 +145,7 @@ async def search(origin: str | dict, dest: str | dict, iso_date: str, *,
         raise BadInput("trip_type RT requires a return_date.")
 
     # funnel_url: /cabs/listing is Akamai-stubbed for a browser that arrives cold.
-    res = await get_text(url, ec=CAB_PAGE, wait_for="networkidle", fresh=fresh,
+    res = await get_text(url, ec=CAB_PAGE, wait_for="domcontentloaded", fresh=fresh,
                          funnel_url=C.CAB_HOME, validate=body_valid)
     out = parse(res.text, url=url, iso_date=iso_date,
                 route=f"{place_label(o)} -> {place_label(d)}")

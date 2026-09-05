@@ -229,7 +229,6 @@ async def harvest_flight_search(origin: str, dest: str, iso_date: str, *,
                     continue
                 done.add(id(resp))
                 with contextlib.suppress(Exception):
-                    await resp.finished()
                     body = await resp.text()
                     if len(body) > len(best):
                         best = body
