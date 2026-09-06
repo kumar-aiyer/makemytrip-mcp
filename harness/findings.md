@@ -1298,3 +1298,80 @@ outlier reading.
 The blocker is cleared. One more subject run should close it — and the flight-budget question
 that made run 5 ambiguous should not recur, because the server now fixes its own funnel
 rather than making the caller spend searches on it.
+
+---
+
+## Run 2026-09-06 — acceptance run 6: BUG-19 and BUG-20 confirmed fixed; H1 and H2 fail together
+
+Full audit in `harness/runs/2026-09-06-acceptance-6/run-log.md`. 53 calls, empty workspace,
+Sonnet-5, 10-page deliverable. The floating date moved to 16 Dec, so nothing could be reused
+from earlier runs.
+
+### Both fixes held, in a subject's hands
+
+**BUG-20.** Two flight searches, both successful, no caller retries — exactly the budget for
+the first time in four runs. The GOI→BLR leg took **116 s**, which is the fix rather than a
+regression: run 5 failed that exact leg three times at ~99 s each and never got data. The
+harvester now spots the missing stream at 30 s, re-visits the funnel inside the call, and
+returns 25 itineraries. A slow success beats three fast failures, and the caller spends one
+search instead of three.
+
+**BUG-19.** The subject wrote, unprompted:
+
+> A FLY91 fare at Rs 3,099/adult exists on both dates but lands at Sindhudurg (SDW) … —
+> **excluded as false-cheap**. MakeMyTrip flags **13 of 25 itineraries per search** as
+> landing at GOX (Mopa) or SDW; these were also excluded.
+
+Run 4's subject walked into that trap and produced an itinerary that drove to Dabolim and
+boarded 85 km away. This one saw the flag, named it, and excluded it on both legs.
+
+H-ARITH was exact again (131,535, with seven category subtotals reconciling independently),
+H6 5/5, H3/H4/H5/H7 all pass.
+
+### H1 and H2 failed for a single reason, and it is a design lesson
+
+**The subject never called `mmt_intercity_options`** — not once, though `mmt_capabilities`
+was its first call and lists that tool as "PREFER THIS for an intercity leg". It used
+`mmt_flight_search`, `mmt_hotel_search` and `mmt_cab_quote` directly.
+
+Both failures follow from that:
+
+- **H2**: rail reaches a subject only through `intercity_options` or a deliberate
+  `mmt_train_search`. Five of six runs have no train line; the one that passed is the one
+  that used the comparison tool.
+- **H1**: the base/tax instruction added after run 4 lives **only** in `intercity_options`'
+  `note`. A subject working through the individual tools never sees it.
+
+So run 5 did not show that the nudge works in general — **it showed the nudge works in the
+tool that carries it.** Guidance that applies to every priced tool cannot live in one of
+them, and a "prefer this tool" line in `capabilities` is not enough to redirect a subject
+that has already decided how to decompose the problem. The split rule belongs in the flight
+and hotel tools too, and the rail-exists rule belongs wherever a one-way intercity leg is
+priced.
+
+This is the same shape as every other lesson in this file: **a correct value in a place the
+caller does not look is not a correct answer.**
+
+### BUG-21 (new, low): every cab route reports `distance_km: 40`
+
+All nine cab quotes returned `km=40` regardless of endpoints — Agonda→Mollem (~70 km),
+Calangute→Old Goa (~15 km), Airport→Calangute (~40 km) alike. The subject spotted it:
+*"regardless of actual endpoints — this is MakeMyTrip's standard outstation package
+granularity."* It is MMT's own summary, not our parse, but we surface it as `distance_km` and
+derive `all_in_per_km_inr` from it, so both are unreliable on short routes — and it is the
+source of BUG-15's odd "4 hr" for 40 km. Either suppress the derived per-km figure when the
+distance looks like a package bucket, or label it as one.
+
+### BUG-17's residual, second run running
+
+`"Goa Airport Dabolim"` → "Comfy Car Rentals Goa" (low, warned), then a retry with
+`"Dabolim Airport Goa"` → "Dabolim Airport" (high). Identical to run 4. The warning works and
+the subject self-corrects, but a region-first query costs ~20 s every time because variants
+are stripped only from the right. Two runs of the same avoidable detour is enough to fix it.
+
+### Phase 3 status
+
+Seven runs in, the server-side defect list is short and the remaining gate failures are about
+**where guidance lives**, not whether the data is right. Outstanding: move the base/tax and
+rail-comparison guidance into the individual tools (H1, H2), token-subset place matching
+(BUG-17 residual), and the `distance_km` package-bucket label (BUG-21).
