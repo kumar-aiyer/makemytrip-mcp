@@ -941,6 +941,120 @@ def test_intercity_indicative_train() -> None:
           ["dominated"] is True)
 
 
+def test_train_class_filter() -> None:
+    """A nine-hour unreserved 2S seat is not a comparable to a flight, so the comparison
+    asks for air-conditioned services within reach of the quickest on the route."""
+    check("ac: sleeper classes are A/C", TR.is_ac_class("3A") and TR.is_ac_class("2A"))
+    check("ac: chair cars are A/C", TR.is_ac_class("CC") and TR.is_ac_class("EC"))
+    check("ac: SL and 2S are not", not TR.is_ac_class("SL") and not TR.is_ac_class("2S"))
+    check("ac: junk null class is not", not TR.is_ac_class(None))
+
+    junk = {"classes": [{"class": None, "fare_inr": 0},
+                        {"class": "3A", "fare_inr": 1010},
+                        {"class": "SL", "fare_inr": 375}]}
+    kept = TR.ac_classes(junk)
+    check("ac: keeps only priced A/C classes",
+          [c["class"] for c in kept] == ["3A"], str([c["class"] for c in kept]))
+
+    trains = [
+        {"train_name": "Jodhpur Exp", "duration_min": 505, "distance_km": 554,
+         "classes": [{"class": "SL", "fare_inr": 375}, {"class": "3A", "fare_inr": 1010}]},
+        {"train_name": "Vishwamanav Exp", "duration_min": 558, "distance_km": 559,
+         "classes": [{"class": "2S", "fare_inr": 225}]},
+        {"train_name": "Panchaganga Exp", "duration_min": 815, "distance_km": 763,
+         "classes": [{"class": "2A", "fare_inr": 1400}]},
+        {"train_name": "Vande Bharat Exp", "duration_min": 480, "distance_km": 554,
+         "classes": [{"class": "CC", "fare_inr": 1200}]},
+    ]
+    kept, summary = TR.filter_trains([dict(t) for t in trains])
+    names = [t["train_name"] for t in kept]
+    check("filter: a 2S-only train is dropped", "Vishwamanav Exp" not in names)
+    check("filter: a train far slower than the quickest is dropped",
+          "Panchaganga Exp" not in names, str(names))
+    check("filter: A/C and quick survive",
+          set(names) == {"Jodhpur Exp", "Vande Bharat Exp"}, str(names))
+    check("filter: says how many it dropped and why",
+          summary["dropped_no_ac_class"] == 1
+          and summary["dropped_slower_than_limit"] == 1, str(summary))
+    check("filter: marks Vande Bharat",
+          next(t for t in kept if "Vande" in t["train_name"])["vande_bharat"] is True)
+    check("filter: speed comes from the timetable, not the name",
+          next(t for t in kept if "Jodhpur" in t["train_name"])["avg_kmph"] == 65.8)
+
+    kept2, summary2 = TR.filter_trains([dict(t) for t in trains],
+                                       ac_only=False, fast_only=False)
+    check("filter: both switches off keeps everything", len(kept2) == 4)
+
+    # a route where nothing is A/C must come back empty, not fall back to non-A/C
+    only2s = [{"train_name": "Passenger", "duration_min": 600, "distance_km": 300,
+               "classes": [{"class": "2S", "fare_inr": 90}]}]
+    kept3, _ = TR.filter_trains(only2s)
+    check("filter: no A/C on the route means no rows, not a silent downgrade",
+          kept3 == [])
+
+
+def test_intercity_prefers_vande_bharat() -> None:
+    """A Vande Bharat is faster and newer than the sleeper sharing its corridor. A
+    caller who asked for fast A/C wants to see it first even when it costs more - and
+    the label has to say so, because it is a preference, not a price ranking."""
+    import asyncio
+    from unittest.mock import patch
+
+    from mmt import tools as T
+
+    trains = [
+        {"train_number": "12779", "train_name": "Goa Express", "duration_min": 505,
+         "distance_km": 554, "vande_bharat": False, "avg_kmph": 65.8,
+         "classes": [{"class": "3A", "fare_inr": 1010}]},
+        {"train_number": "20661", "train_name": "Vande Bharat Exp", "duration_min": 480,
+         "distance_km": 554, "vande_bharat": True, "avg_kmph": 69.2,
+         "classes": [{"class": "CC", "fare_inr": 1200}]},
+    ]
+    rows = T._train_rows(trains)
+    check("vb: the Vande Bharat is offered first despite costing more",
+          rows[0][0]["train_number"] == "20661", rows[0][0]["train_number"])
+    check("vb: the cheaper express still follows", rows[1][0]["train_number"] == "12779")
+    check("vb: and the label says which it is",
+          "[Vande Bharat]" in T._train_label(rows[0][0], rows[0][1]))
+    check("vb: an ordinary train carries no marker",
+          "[Vande Bharat]" not in T._train_label(rows[1][0], rows[1][1]))
+    check("vb: a train with no A/C class is not offered at all",
+          T._train_rows([{"train_number": "1", "train_name": "Passenger",
+                          "classes": [{"class": "2S", "fare_inr": 90}]}]) == [])
+
+    # and the comparison asks for the filters
+    asked = {}
+
+    async def fake(name, **kw):
+        asked[name] = kw
+        if name == "mmt_train_search":
+            return {"train_count": 2, "trains": trains}
+        if name == "mmt_flight_search":
+            return {"itineraries": []}
+        return {"cabs": []}
+
+    loose = lambda n: ({}, n.strip().lower())
+    with patch.object(T, "_sub", fake), patch.object(T.CB, "resolve_place_loose", loose):
+        r = asyncio.run(T.TOOLS["mmt_intercity_options"]["fn"](
+            origin="Bengaluru", dest="goa", date="2026-12-15", adults=2))
+    check("vb: intercity requests A/C and fast services",
+          asked["mmt_train_search"].get("ac_only") is True
+          and asked["mmt_train_search"].get("fast_only") is True,
+          str(asked.get("mmt_train_search")))
+    trains_out = [o for o in r["options"] if o["mode"] == "train"]
+    vb = next((o for o in trains_out if o.get("vande_bharat")), None)
+    check("vb: the Vande Bharat is selected even though it is dearer", vb is not None)
+    check("vb: and is labelled as one", vb and "[Vande Bharat]" in vb["label"])
+    check("vb: party total is per passenger x2", vb and vb["party_total_inr"] == 2400)
+    # The final list stays cost-ordered across modes - that is the documented contract,
+    # and hiding a preference inside a price sort is the judgement this tool refuses to
+    # make. The preference lives in SELECTION: a dearer Vande Bharat still gets a slot.
+    check("vb: the global list remains ordered by party total",
+          [o["party_total_inr"] for o in trains_out]
+          == sorted(o["party_total_inr"] for o in trains_out),
+          str([o["party_total_inr"] for o in trains_out]))
+
+
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
@@ -953,6 +1067,7 @@ def main() -> int:
                test_call_log, test_past_date_guard, test_place_match_quality,
                test_compare_normalisation, test_cab_place_candidates,
                test_furthest_bookable, test_train_indicative_fare,
+               test_train_class_filter, test_intercity_prefers_vande_bharat,
                test_intercity_indicative_train,
                test_intercity_options):
         try:

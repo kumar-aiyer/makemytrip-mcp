@@ -41,6 +41,102 @@ def resolve_station(name: str) -> str:
                         ". Or pass a station code directly, e.g. MDU.")
 
 
+# Air-conditioned classes, seated and sleeper. Observed live on this corridor: 1A, 2A,
+# 3A, 3E, CC alongside the non-AC SL and 2S. EC/EA/EV/EM are the Vande Bharat and Tejas
+# chair cars. FC (First Class) is deliberately absent - it is not air-conditioned.
+AC_SLEEPER_CLASSES = frozenset({"1A", "2A", "3A", "3E"})
+AC_SEATED_CLASSES = frozenset({"CC", "EC", "EA", "EV", "EM"})
+AC_CLASSES = AC_SLEEPER_CLASSES | AC_SEATED_CLASSES
+
+VANDE_BHARAT_RE = re.compile(r"vande\s*bharat", re.I)
+
+# How much slower than the quickest train on the route still counts as "fast". Relative
+# on purpose: an absolute km/h threshold that suits a 550 km corridor is wrong for a
+# 2,000 km one, and the useful question is always "slow compared to what is on offer".
+FAST_FACTOR = 1.25
+
+
+def is_ac_class(code: Any) -> bool:
+    return str(code or "").strip().upper() in AC_CLASSES
+
+
+def ac_classes(train: dict[str, Any]) -> list[dict[str, Any]]:
+    """Priced A/C classes only. Drops the null-class junk rows the listing carries."""
+    return [c for c in (train.get("classes") or [])
+            if is_ac_class(c.get("class"))
+            and isinstance(c.get("fare_inr"), (int, float)) and c["fare_inr"] > 0]
+
+
+def is_vande_bharat(train: dict[str, Any]) -> bool:
+    return bool(VANDE_BHARAT_RE.search(str(train.get("train_name") or "")))
+
+
+def avg_kmph(train: dict[str, Any]) -> float | None:
+    """Average speed, which is the only defensible way to call a train fast: it comes
+    from the timetable rather than from the name."""
+    km, mins = train.get("distance_km"), train.get("duration_min")
+    try:
+        km, mins = float(km), float(mins)
+    except (TypeError, ValueError):
+        return None
+    return round(km / (mins / 60), 1) if mins > 0 and km > 0 else None
+
+
+def filter_trains(trains: list[dict[str, Any]], *, ac_only: bool = True,
+                  fast_only: bool = True,
+                  fast_factor: float = FAST_FACTOR) -> tuple[list[dict[str, Any]], dict]:
+    """Keep the trains a traveller would actually consider, and say what was dropped.
+
+    `ac_only` keeps trains offering a priced air-conditioned class, seated or sleeper -
+    an unreserved 2S seat for nine hours is not a comparable to a flight. `fast_only`
+    keeps those within `fast_factor` of the quickest survivor on the route.
+
+    Vande Bharat services are marked rather than privileged here; ordering is the
+    caller's business, and a filter that silently promoted one would be making a
+    judgement instead of reporting a fact.
+
+    Returns (kept, summary) - the summary is what makes the filter honest, because a
+    caller can see how many options were removed and why.
+    """
+    total = len(trains)
+    kept = list(trains)
+    dropped_non_ac = 0
+    if ac_only:
+        with_ac = [t for t in kept if ac_classes(t)]
+        dropped_non_ac = len(kept) - len(with_ac)
+        kept = with_ac
+
+    dropped_slow = 0
+    fastest = None
+    durations = [t.get("duration_min") for t in kept
+                 if isinstance(t.get("duration_min"), (int, float))
+                 and t["duration_min"] > 0]
+    if fast_only and durations:
+        fastest = min(durations)
+        limit = fastest * fast_factor
+        quick = [t for t in kept
+                 if not isinstance(t.get("duration_min"), (int, float))
+                 or t["duration_min"] <= limit]
+        dropped_slow = len(kept) - len(quick)
+        kept = quick
+
+    for train in kept:
+        train["vande_bharat"] = is_vande_bharat(train)
+        train["avg_kmph"] = avg_kmph(train)
+
+    return kept, {
+        "considered": total, "kept": len(kept),
+        "dropped_no_ac_class": dropped_non_ac,
+        "dropped_slower_than_limit": dropped_slow,
+        "fastest_min": fastest,
+        "fast_factor": fast_factor if fast_only else None,
+        "ac_classes": sorted(AC_CLASSES),
+        "note": "Filtered to trains offering a priced A/C class (seated or sleeper) and "
+                "within {}x the quickest on the route. Unfiltered results are available "
+                "with ac_only/fast_only false.".format(fast_factor),
+    }
+
+
 def booking_opens(iso_date: str) -> str:
     try:
         d = date.fromisoformat(iso_date)

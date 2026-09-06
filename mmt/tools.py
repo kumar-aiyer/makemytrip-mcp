@@ -286,9 +286,16 @@ async def mmt_flight_search(origin: str, dest: str, date: str, adults: int = 2,
     "indicative": {**S_BOOL, "description":
                    "When the date is past the booking window, also quote the furthest "
                    "date Indian Railways will price today. Default true."},
+    "ac_only": {**S_BOOL, "description":
+                "Keep only trains offering a priced A/C class, seated or sleeper. "
+                "Default false - the raw listing is returned whole."},
+    "fast_only": {**S_BOOL, "description":
+                  "Keep only trains within 1.25x the quickest on the route. "
+                  "Default false."},
 }, ["origin", "dest", "date"]))
 async def mmt_train_search(origin: str, dest: str, date: str, travel_class: str = "",
-                           indicative: bool = True, fresh: bool = False) -> dict:
+                           indicative: bool = True, ac_only: bool = False,
+                           fast_only: bool = False, fresh: bool = False) -> dict:
     """Trains on a route for one date, with live class-by-class availability and fare.
 
     Returns each train with departure, arrival, duration, days it runs, and per class:
@@ -305,6 +312,13 @@ async def mmt_train_search(origin: str, dest: str, date: str, travel_class: str 
     `days_out` and the requested date so the two cannot be confused. Without it the
     honest answer to a date 100 days out is silence, and silence is what makes a planner
     reach for a web estimate. Pass `indicative: false` to skip the extra lookup.
+
+    `ac_only` keeps trains offering a priced air-conditioned class (1A/2A/3A/3E sleeper,
+    CC/EC chair car) and `fast_only` keeps those within 1.25x the quickest on the route.
+    Both default to FALSE here so the raw listing stays raw; mmt_intercity_options turns
+    them on, because an unreserved 2S seat for nine hours is not a comparable to a
+    flight. Whatever is filtered, a `filtered` summary says how many were dropped and
+    why. Surviving trains are marked `vande_bharat` and carry `avg_kmph`.
     """
     src, dst = TR.resolve_station(origin), TR.resolve_station(dest)
     if not TR.in_window(date):
@@ -325,8 +339,12 @@ async def mmt_train_search(origin: str, dest: str, date: str, travel_class: str 
             try:
                 got = await TR.search(src, dst, quote_for, class_code=travel_class,
                                       fresh=fresh)
-                block["train_count"] = got.get("train_count")
-                block["trains"] = got.get("trains")
+                kept, summary = TR.filter_trains(got.get("trains") or [],
+                                                 ac_only=ac_only, fast_only=fast_only)
+                block["train_count"] = len(kept)
+                block["trains"] = kept
+                if ac_only or fast_only:
+                    block["filtered"] = summary
             except MMTError as e:
                 block["error"] = e.message
                 block["kind"] = e.kind
@@ -342,6 +360,11 @@ async def mmt_train_search(origin: str, dest: str, date: str, travel_class: str 
                     f"priced, are included." if quote_for else ""),
             details=details)
     out = await TR.search(src, dst, date, class_code=travel_class, fresh=fresh)
+    kept, summary = TR.filter_trains(out.get("trains") or [], ac_only=ac_only,
+                                     fast_only=fast_only)
+    out["trains"], out["train_count"] = kept, len(kept)
+    if ac_only or fast_only:
+        out["filtered"] = summary
     if not out["train_count"]:
         out["warning"] = ("No trains returned even though the date is inside the "
                           "booking window - check the station codes.")
@@ -374,6 +397,29 @@ def _mode_list(modes) -> list[str]:
     if bad:
         raise BadInput(f"unknown mode(s) {bad}; known: {list(MODES)}")
     return list(dict.fromkeys(modes))
+
+
+def _train_label(train: dict, cls: dict) -> str:
+    mark = " [Vande Bharat]" if train.get("vande_bharat") else ""
+    return (f"{train.get('train_number')} {train.get('train_name')} "
+            f"({cls.get('class')}){mark}")
+
+
+def _train_rows(trains: list) -> list:
+    """(train, cheapest priced A/C class) rows, Vande Bharat first.
+
+    The preference is a stated one rather than a hidden re-ranking: a Vande Bharat is
+    faster and newer than the sleeper it shares a corridor with, and a caller who asked
+    for fast A/C options wants to see one before a 1970s express even when it costs
+    more. Everything else stays cheapest-first, and the label says which is which.
+    """
+    rows = []
+    for train in trains:
+        classes = TR.ac_classes(train)
+        if classes:
+            rows.append((train, min(classes, key=lambda c: c["fare_inr"])))
+    rows.sort(key=lambda p: (not p[0].get("vande_bharat"), p[1]["fare_inr"]))
+    return rows
 
 
 async def _sub(name: str, **kwargs) -> dict:
@@ -474,30 +520,28 @@ async def mmt_intercity_options(origin: str, dest: str, date: str, adults: int =
             note("train", "not_applicable", e.message)
         else:
             calls["mmt_train_search"] = 1
+            # An unreserved seat for nine hours is not a comparable to a flight, so
+            # the comparison asks for air-conditioned and reasonably quick services.
             r = await _sub("mmt_train_search", origin=origin, dest=dest, date=date,
-                           fresh=fresh)
+                           ac_only=True, fast_only=True, fresh=fresh)
             if r.get("error"):
                 extra = {k: r[k] for k in ("booking_opens", "hint") if k in r}
                 note("train", r.get("kind") or "error", r["error"], **extra)
                 # A fare for the furthest bookable date is still worth comparing, as
                 # long as it can never be mistaken for a fare on the requested one.
                 ind = r.get("indicative") or {}
-                for tr in (ind.get("trains") or [])[:MAX_PER_MODE]:
-                    cheap = next((c for c in tr.get("classes", [])
-                                  if isinstance(c.get("fare_inr"), (int, float))
-                                  and c["fare_inr"] > 0), None)
-                    if not cheap:
-                        continue
+                for tr, cheap in _train_rows(ind.get("trains") or [])[:MAX_PER_MODE]:
                     options.append({
                         "mode": "train",
-                        "label": f"{tr.get('train_number')} {tr.get('train_name')} "
-                                 f"({cheap.get('class')})",
+                        "label": _train_label(tr, cheap),
                         "per_unit_inr": cheap.get("fare_inr"),
                         "unit": "per passenger",
                         "party_total_inr": CMP.party_total(cheap.get("fare_inr"),
                                                            "per passenger", adults),
                         "duration_min": CMP.duration_minutes(tr.get("duration_min")),
                         "depart": tr.get("departure"), "arrive": tr.get("arrival"),
+                        "vande_bharat": bool(tr.get("vande_bharat")),
+                        "avg_kmph": tr.get("avg_kmph"),
                         "indicative": True,
                         "quoted_for_date": ind.get("quoted_for"),
                         "excludes": ["station transfers at both ends",
@@ -505,25 +549,19 @@ async def mmt_intercity_options(origin: str, dest: str, date: str, adults: int =
                         "source_tool": "mmt_train_search",
                     })
             else:
-                priced = []
-                for tr in r.get("trains", []):
-                    cheap = next((c for c in tr.get("classes", [])
-                                  if isinstance(c.get("fare_inr"), (int, float))
-                                  and c["fare_inr"] > 0), None)
-                    if cheap:
-                        priced.append((tr, cheap))
-                priced.sort(key=lambda p: p[1]["fare_inr"])
+                priced = _train_rows(r.get("trains", []))
                 for tr, cheap in priced[:MAX_PER_MODE]:
                     options.append({
                         "mode": "train",
-                        "label": f"{tr.get('train_number')} {tr.get('train_name')} "
-                                 f"({cheap.get('class')})",
+                        "label": _train_label(tr, cheap),
                         "per_unit_inr": cheap.get("fare_inr"),
                         "unit": "per passenger",
                         "party_total_inr": CMP.party_total(cheap.get("fare_inr"),
                                                            "per passenger", adults),
                         "duration_min": CMP.duration_minutes(tr.get("duration_min")),
                         "depart": tr.get("departure"), "arrive": tr.get("arrival"),
+                        "vande_bharat": bool(tr.get("vande_bharat")),
+                        "avg_kmph": tr.get("avg_kmph"),
                         "availability": cheap.get("status"),
                         "excludes": ["station transfers at both ends"],
                         "source_tool": "mmt_train_search",
@@ -739,7 +777,10 @@ async def mmt_capabilities() -> dict:
                       "priced, on the same weekday, under `indicative` - a real fare "
                       "for a different date, never the requested one. Use it to compare "
                       "rail against road and air; do not present it as the fare for the "
-                      "day asked about",
+                      "day asked about. mmt_intercity_options additionally asks "
+                      "for ac_only and fast_only, so the rail rows it compares "
+                      "are air-conditioned services within 1.25x the quickest on "
+                      "the route, Vande Bharat first where one runs",
         },
         "pricing_conventions": {
             "currency": "INR",
@@ -762,6 +803,11 @@ async def mmt_capabilities() -> dict:
             "do not leave local transport off an itinerary silently.",
             "Hotel figures are per night. A stay line is nightly x nights and is an "
             "estimate: a range spanning a price change will not match it exactly.",
+            "Rail rows in mmt_intercity_options are filtered: air-conditioned "
+            "classes only (1A/2A/3A/3E sleeper, CC/EC chair car) and within 1.25x "
+            "the quickest train on the route, because an unreserved seat for nine "
+            "hours is not a comparable to a flight. Call mmt_train_search directly "
+            "for the unfiltered listing - it returns everything by default.",
             "mmt_cab_find_place resolves against MakeMyTrip's own autocomplete, which "
             "lists venues alongside localities - a locality name can land on a hotel or "
             "a beach that merely contains the word. Read the `match` block it returns: "

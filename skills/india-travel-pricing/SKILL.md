@@ -21,6 +21,15 @@ per-date breakdown. The fields are `nightly_base_inr`, `nightly_tax_inr`, `night
 `nightly_` prefix is load-bearing. Anything that says "stay totals" or
 `all_in_per_night_inr` predates 2026-09-05 and is wrong.
 
+Rail options inside `mmt_intercity_options` are filtered to **air-conditioned classes**
+(1A/2A/3A/3E sleeper, CC/EC chair car) that run **within 1.25x the quickest train on the
+route**, and a **Vande Bharat is given a slot even when it costs more** than the sleeper
+beside it. The reasoning is that a nine-hour unreserved 2S seat is not a comparable to a
+flight, and a fare you would never actually book makes rail look cheaper than it is. What
+survives is marked `vande_bharat` and carries `avg_kmph` computed from the timetable rather
+than guessed from the name. `mmt_train_search` still returns the whole listing by default -
+pass `ac_only` / `fast_only` there if you want the same view.
+
 A train date past the 60-day reservation window has no fare, and `mmt_train_search` says so
 with `booking_opens`. It now also returns an `indicative` block: the same route on the
 furthest date Indian Railways prices today, picked on the same weekday so the same services

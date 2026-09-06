@@ -970,3 +970,55 @@ That is the trade-off the whole tool exists to put in front of a reasoning model
 twentieth of the airfare for nine hours instead of eighty minutes, on one call, with the
 booking-window caveat attached. **H2 is now not merely exercisable but hard to avoid** — a
 subject pricing this leg gets the train status whether or not it thought to ask.
+
+---
+
+## Run 2026-09-05 — rail options filtered to fast A/C services, Vande Bharat preferred
+
+Offline **258/258** (23 new assertions). Verified live on SBC → MAO.
+
+A nine-hour unreserved 2S seat is not a comparable to a flight, and quoting one makes rail
+look cheaper than anything a traveller would actually book. `mmt_intercity_options` now asks
+for air-conditioned services within reach of the quickest train on the route.
+
+Live, same route as before the change:
+
+```
+7 trains considered -> 4 kept   (0 dropped for no A/C, 3 dropped as slower than 1.25x)
+  20694 Jodhpur Exp        8h 25m  65.8 km/h   cheapest A/C  3A  Rs 955
+  16210 Ajmer Express      8h 38m  64.7 km/h   cheapest A/C  CC  Rs 735
+  16589 Rani Chennamma     8h 58m  62.5 km/h   cheapest A/C  3E  Rs 835
+  20676 Vishwamanav Exp    9h 18m  60.1 km/h   cheapest A/C  CC  Rs 785
+```
+
+Before, the same call surfaced SL at Rs 375 and 2S at Rs 225 as the headline fares.
+
+### Three choices worth recording
+
+**"Fast" is measured, not asserted.** The filter keeps trains within `1.25x` the quickest
+*on that route*, rather than applying a km/h threshold or trusting a name. A threshold that
+suits a 550 km corridor is wrong for a 2,000 km one, and "Express" in an Indian train name
+means little. `avg_kmph` is computed from distance and duration and reported, so the caller
+can see the basis.
+
+**A/C means A/C.** `1A/2A/3A/3E` sleeper and `CC/EC/EA/EV/EM` chair car. `FC` is excluded
+because First Class is not air-conditioned, and the null-class junk rows the listing carries
+are dropped with it. A route with no A/C service returns **no rows** rather than quietly
+falling back to a sleeper - tested, because a silent downgrade is the failure mode this
+project keeps finding.
+
+**The Vande Bharat preference lives in selection, not in the sort.** A Vande Bharat gets a
+slot among the three trains offered even when it costs more than the sleeper beside it, and
+its label carries `[Vande Bharat]`. What it does *not* do is jump the price ordering of the
+final list: the tool documents "undominated first, then by party total", and burying a
+preference inside a cost sort is exactly the hidden judgement `mmt_intercity_options` was
+built to avoid. Without the selection preference, a dearer Vande Bharat would simply be cut
+by cheaper sleepers and never seen.
+
+### Defaults left alone
+
+`mmt_train_search` still returns the **whole** listing by default. `ac_only` and `fast_only`
+are opt-in there and switched on only by the comparison tool, so the raw data tool stays
+raw - a caller who wants the Rs 375 sleeper can still have it, and H2 sees what it always
+saw. Whenever a filter runs, a `filtered` summary reports what was dropped and why; a filter
+that cannot be audited is just a smaller lie.
