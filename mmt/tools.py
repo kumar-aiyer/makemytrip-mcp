@@ -491,6 +491,8 @@ async def mmt_intercity_options(origin: str, dest: str, date: str, adults: int =
                 note("flight", r.get("kind") or "error", r["error"])
             else:
                 everything = r.get("itineraries", [])
+                # Both ends: an itinerary leaving from a nearby airport is as unusable
+                # as one landing at one, and it is the cheaper-looking of the two.
                 into = [i for i in everything if not i.get("alternate_airport")]
                 skipped = len(everything) - len(into)
                 cheapest = sorted(into, key=lambda x: x.get("all_in_inr") or 0)
@@ -509,9 +511,15 @@ async def mmt_intercity_options(origin: str, dest: str, date: str, adults: int =
                         "source_tool": "mmt_flight_search",
                     })
                 if skipped:
+                    ends = {"arrival": len([i for i in everything
+                                            if i.get("alternate_arrival")]),
+                            "departure": len([i for i in everything
+                                              if i.get("alternate_departure")])}
                     note("flight", "excluded_alternate_airports",
-                         f"{skipped} itinerary(ies) land at a different airport and are "
-                         f"not fares into {dest}.")
+                         f"{skipped} itinerary(ies) use a different airport at one end "
+                         f"({ends['arrival']} arrive elsewhere, {ends['departure']} "
+                         f"depart elsewhere) and are not fares between {origin} and "
+                         f"{dest}.", ends=ends)
 
     if "train" in wanted:
         try:
@@ -621,9 +629,12 @@ async def mmt_intercity_options(origin: str, dest: str, date: str, adults: int =
         "unavailable": unavailable,
         "calls_made": calls,
         "note": "party_total_inr is the whole party; per_unit_inr with `unit` is the "
-                "convention the source quoted in. duration_min is in-vehicle time only "
-                "- see each option's `excludes`. `dominated` means dearer AND slower "
-                "than another option; the rest is your call.",
+                "convention the source quoted in. Flight and cab rows also carry "
+                "base_inr and tax_inr: report those separately rather than only the "
+                "all-in figure - a blended number is how budgets end up understated, "
+                "and two acceptance runs in a row collapsed them. duration_min is "
+                "in-vehicle time only - see each option's `excludes`. `dominated` means "
+                "dearer AND slower than another option; the rest is your call.",
     }
 
 

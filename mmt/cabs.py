@@ -125,7 +125,13 @@ def match_quality(place: dict[str, Any], query: str, tier: str) -> dict[str, Any
     }
     # A locality query answered by a named venue is the failure worth naming, and it is
     # not caught by confidence alone: a venue can match its own name exactly.
-    if not is_city and not asked_for_venue:
+    #
+    # But `is_city` alone is not that signal. MakeMyTrip marks plenty of real localities
+    # false - Palolem among them - and run 4 warned on "Palolem Goa" -> "Palolem", a
+    # perfect answer. A false warning is worse than none, because it is how the true
+    # ones get ignored. So a STRONG tier is trusted: the harvester found a row actually
+    # named what was asked for, whatever MakeMyTrip files it under.
+    if not is_city and not asked_for_venue and tier not in STRONG_TIERS:
         out["confidence"] = "low" if confidence == "high" else confidence
         out["warning"] = (
             f"{query!r} resolved to {main!r}, which MakeMyTrip does not classify as a "

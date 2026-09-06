@@ -1104,3 +1104,62 @@ push back before touching the prompt.
 Nine gates pass, two fail. **H5's failure is ours to fix, and H1's is arguably ours too.**
 Phase 3 does not close on this run — but for the first time nothing is unscoreable, and both
 failures point at code rather than at evidence.
+
+---
+
+## Run 2026-09-05 — BUG-19 fixed, plus the two smaller things run 4 exposed
+
+Offline **271/271** (13 new assertions). Verified live on the exact call that misled run 4.
+
+### BUG-19: nearby airports at both ends
+
+`flights.py` flagged an itinerary only when it *landed* somewhere other than the airport
+asked for. `parse_docs` now takes `origin` as well as `dest` and sets `alternate_arrival` /
+`alternate_departure` separately, both raising the existing `alternate_airport` flag; the
+`note` names whichever end is affected. `mmt_intercity_options` filters on the flag as
+before, so it now drops both, and its `unavailable` entry counts which end was wrong.
+
+The live proof, on the same GOI→BLR call run 4 made:
+
+```
+before:  FLY91 IC 5301  Rs 7,398 for two   offered, undominated, unflagged
+after:   IndiGo 6E 6163 Rs 11,988 for two  cheapest honest option
+         excluded: 13 itinerary(ies) use a different airport at one end
+                   (0 arrive elsewhere, 13 depart elsewhere)
+```
+
+**Thirteen of the itineraries depart from somewhere other than Goa** — more than half the
+result set, every one of them previously unflagged and eligible to be chosen. The return
+airfare correction is 62%.
+
+The scale of that number is the finding. This was not a rare edge: on this route the
+majority of what MakeMyTrip volunteers for a Goa departure leaves from another state, and
+the server had been silently passing all of it through since flights first worked.
+
+### The `is_city` false warning
+
+`match_quality` downgraded any non-city result to `low` when the query had no venue word.
+That warned on `"Palolem Goa"` → `Palolem`, which is exactly right, purely because
+MakeMyTrip files Palolem as a non-city locality. A strong tier is now trusted: if the
+harvester found a row actually *named* what was asked for, `is_city` does not override it.
+The real failures still warn - the run-4 fallback to "Comfy Car Rentals Goa" and the
+substring match onto "Bibhitaki Hostel Palolem Goa" both keep their warnings, and there are
+tests pinning all three cases.
+
+False warnings are how true ones get ignored, and this project has exactly one subject-facing
+warning that has ever changed a subject's behaviour. Worth keeping sharp.
+
+### H1: the note now says it
+
+`mmt_intercity_options` carried `base_inr` and `tax_inr` on flight and cab rows and never
+mentioned them. Its `note` now tells the caller to report them separately and says why - a
+blended number is how budgets end up understated. This is the cheapest possible intervention
+before touching the prompt, and if a third subject still collapses the split, the answer is
+that H1 is asking for something the surface does not encourage and the gate or the schema
+needs rethinking rather than the model.
+
+### Phase 3 status
+
+Both failing gates from run 4 now have fixes with regression tests. One more subject run
+closes Phase 3 - and it is cheap now: the call log means the audit needs nothing from the
+operator but a file copy.

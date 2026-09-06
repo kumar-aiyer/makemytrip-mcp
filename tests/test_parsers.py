@@ -1055,6 +1055,90 @@ def test_intercity_prefers_vande_bharat() -> None:
           str([o["party_total_inr"] for o in trains_out]))
 
 
+def test_alternate_airport_both_ends() -> None:
+    """BUG-19, from run 4: only arrivals were checked, so on a GOI->BLR search
+    FLY91 IC 5301 SDW->BLR came back unflagged. The subject built an itinerary that
+    drove to Dabolim and boarded 85 km away at Sindhudurg."""
+    from mmt import flights as FL
+
+    # the real parser, both directions
+    sse = (FIX / "flight_stream.sse").read_text(encoding="utf-8")
+    its = FL.parse_stream(sse, dest="GOI")
+    origins = {i.get("from") for i in its}
+    check("altairport: the fixture has a single origin", len(origins) == 1, str(origins))
+    only = origins.pop()
+
+    same = FL.parse_stream(sse, dest="GOI", origin=only)
+    check("altairport: matching origin flags no departures",
+          not any(i.get("alternate_departure") for i in same))
+    other = FL.parse_stream(sse, dest="GOI", origin="XXX")
+    check("altairport: a mismatched origin flags every departure",
+          all(i.get("alternate_departure") == only for i in other), str(other[:1]))
+    check("altairport: and marks them alternate_airport",
+          all(i.get("alternate_airport") for i in other))
+    check("altairport: arrivals are still flagged independently",
+          any(i.get("alternate_arrival") for i in FL.parse_stream(sse, dest="ZZZ")))
+
+
+def test_intercity_excludes_alternate_departures() -> None:
+    """The comparison must drop a flight that leaves from the wrong airport, not just
+    one that lands at the wrong one - it is the cheaper-looking of the two."""
+    import asyncio
+    from unittest.mock import patch
+
+    from mmt import tools as T
+
+    flights = {"itineraries": [
+        {"all_in_inr": 3699.0, "airline": "FLY91", "flight_no": "IC 5301",
+         "from": "SDW", "to": "BLR", "duration": "01h 50m", "stops": 0,
+         "alternate_airport": True, "alternate_departure": "SDW"},
+        {"all_in_inr": 5994.0, "airline": "IndiGo", "flight_no": "6E 6163",
+         "from": "GOI", "to": "BLR", "duration": "01h 10m", "stops": 0},
+    ]}
+
+    async def fake(name, **kw):
+        return {"mmt_flight_search": flights,
+                "mmt_train_search": {"error": "x", "kind": "not_in_window"},
+                "mmt_cab_quote": {"cabs": []}}[name]
+
+    loose = lambda n: ({}, n.strip().lower())
+    with patch.object(T, "_sub", fake), patch.object(T.CB, "resolve_place_loose", loose):
+        r = asyncio.run(T.TOOLS["mmt_intercity_options"]["fn"](
+            origin="GOI", dest="BLR", date="2026-12-21", adults=2))
+
+    labels = " ".join(o["label"] for o in r["options"])
+    check("intercity: the SDW departure is excluded", "IC 5301" not in labels, labels)
+    check("intercity: the real GOI flight survives", "6E 6163" in labels)
+    excl = next((u for u in r["unavailable"]
+                 if u["kind"] == "excluded_alternate_airports"), None)
+    check("intercity: the exclusion is reported", excl is not None)
+    check("intercity: and counts which end was wrong",
+          excl and excl["ends"]["departure"] == 1, str(excl))
+    check("intercity: the cheapest surviving option is the honest fare",
+          r["options"][0]["party_total_inr"] == 11988,
+          str(r["options"][0]["party_total_inr"]))
+
+
+def test_match_quality_no_false_warning() -> None:
+    """Run 4 warned on "Palolem Goa" -> "Palolem", a perfect answer, purely because
+    MakeMyTrip marks Palolem is_city false. False warnings are how true ones get
+    ignored."""
+    palolem = {"place_id": "P", "main_text": "Palolem", "is_city": False}
+    m = CB.match_quality(palolem, "Palolem Goa", "exact_shortened")
+    check("match: a strong tier is trusted even when is_city is false",
+          m["confidence"] == "high" and "warning" not in m, str(m))
+
+    # the real failure must still warn
+    hostel = {"place_id": "H", "main_text": "Bibhitaki Hostel Palolem Goa",
+              "is_city": False}
+    m2 = CB.match_quality(hostel, "Palolem Goa", "substring")
+    check("match: a weak tier onto a venue still warns",
+          m2["confidence"] == "low" and "warning" in m2)
+    rentals = {"place_id": "R", "main_text": "Comfy Car Rentals Goa", "is_city": False}
+    m3 = CB.match_quality(rentals, "Goa Airport Dabolim", "fallback")
+    check("match: the car-rental fallback from run 4 still warns", "warning" in m3)
+
+
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
@@ -1068,6 +1152,9 @@ def main() -> int:
                test_compare_normalisation, test_cab_place_candidates,
                test_furthest_bookable, test_train_indicative_fare,
                test_train_class_filter, test_intercity_prefers_vande_bharat,
+               test_alternate_airport_both_ends,
+               test_intercity_excludes_alternate_departures,
+               test_match_quality_no_false_warning,
                test_intercity_indicative_train,
                test_intercity_options):
         try:

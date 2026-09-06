@@ -122,20 +122,27 @@ def _decode_frame(payload: str) -> dict[str, Any] | None:
         return None
 
 
-def parse_stream(text: str, max_results: int = 25, *,
-                 dest: str | None = None) -> list[dict[str, Any]]:
-    return parse_docs(decode_stream(text), max_results, dest=dest)
+def parse_stream(text: str, max_results: int = 25, *, dest: str | None = None,
+                 origin: str | None = None) -> list[dict[str, Any]]:
+    return parse_docs(decode_stream(text), max_results, dest=dest, origin=origin)
 
 
 def parse_docs(docs: list[dict[str, Any]], max_results: int = 25, *,
-               dest: str | None = None) -> list[dict[str, Any]]:
-    """Pure. `dest` is the requested arrival airport, used only to flag itineraries
-    that land somewhere else."""
+               dest: str | None = None,
+               origin: str | None = None) -> list[dict[str, Any]]:
+    """Pure. `dest` and `origin` are the requested airports, used to flag itineraries
+    that land - or depart - somewhere else.
+
+    BUG-19: only arrivals were checked. On a GOI->BLR search that let
+    `FLY91 IC 5301 SDW->BLR` through unflagged, and it leaves from Sindhudurg, 85 km
+    from Goa. A subject built an itinerary that drove to Dabolim and boarded at SDW.
+    A nearby airport is no less wrong for being at the start of the journey.
+    """
     found: list[dict[str, Any]] = []
     for doc in docs:
         journeys = doc.get("journeyMap") or {}
         for card in _cards(doc):
-            it = _itinerary(card, journeys, dest)
+            it = _itinerary(card, journeys, dest, origin)
             if it is not None:
                 found.append(it)
 
@@ -164,7 +171,8 @@ def _cards(doc: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _itinerary(card: dict[str, Any], journeys: dict[str, Any],
-               dest: str | None) -> dict[str, Any] | None:
+               dest: str | None,
+               origin: str | None = None) -> dict[str, Any] | None:
     fare = card.get("fare")
     if not isinstance(fare, (int, float)):
         return None
@@ -193,10 +201,16 @@ def _itinerary(card: dict[str, Any], journeys: dict[str, Any],
     }
     if first.get("depTimeStampStr") and last.get("arrTimeStampStr"):
         out["arrives_next_day"] = first["depTimeStampStr"] != last["arrTimeStampStr"]
+    # MakeMyTrip volunteers nearby airports at BOTH ends. Saying so is the difference
+    # between a cheaper option and a wrong number - or, at the departure end, an
+    # itinerary that cannot be flown as written.
+    from_code = out["from"]
     if dest and to_code and to_code.upper() != dest.upper():
-        # MakeMyTrip volunteers nearby airports. Saying so is the difference between
-        # a cheaper option and a wrong number.
         out["alternate_airport"] = True
+        out["alternate_arrival"] = to_code
+    if origin and from_code and from_code.upper() != origin.upper():
+        out["alternate_airport"] = True
+        out["alternate_departure"] = from_code
     return out
 
 
@@ -264,7 +278,7 @@ async def search(origin: str, dest: str, iso_date: str, *, adults: int = 2,
         raw = await HV.harvest_flight_search(origin, dest, iso_date, adults=adults,
                                              children=children, infants=infants,
                                              cabin=cabin)
-    itineraries = parse_stream(raw, max_results, dest=dest)
+    itineraries = parse_stream(raw, max_results, dest=dest, origin=origin)
     out: dict[str, Any] = {
         "route": f"{origin.upper()}-{dest.upper()}",
         "date": iso_date,
@@ -282,13 +296,22 @@ async def search(origin: str, dest: str, iso_date: str, *, adults: int = 2,
         "cached": False,
         "fetched_at": _now(),
     }
-    alt = [i for i in itineraries if i.get("alternate_airport")]
-    if alt:
+    landing_elsewhere = [i for i in itineraries if i.get("alternate_arrival")]
+    leaving_elsewhere = [i for i in itineraries if i.get("alternate_departure")]
+    if landing_elsewhere or leaving_elsewhere:
+        parts = []
+        if landing_elsewhere:
+            parts.append(f"{len(landing_elsewhere)} land at a different airport than "
+                         f"{dest.upper()}")
+        if leaving_elsewhere:
+            parts.append(f"{len(leaving_elsewhere)} depart from a different airport "
+                         f"than {origin.upper()}")
         out["note"] = (
-            f"{len(alt)} of these land at a different airport than {dest.upper()} - "
-            "MakeMyTrip volunteers nearby airports. Each itinerary carries its own "
-            "`to`; the ones flagged `alternate_airport` are not fares into "
-            f"{dest.upper()}.")
+            " and ".join(parts).capitalize() +
+            " - MakeMyTrip volunteers nearby airports at both ends. Each itinerary "
+            "carries its own `from`/`to`; anything flagged `alternate_airport` is not "
+            f"a fare between {origin.upper()} and {dest.upper()}, and a cheaper one "
+            "usually hides a long road transfer.")
 
     if not itineraries:
         raise EmptyValid(
