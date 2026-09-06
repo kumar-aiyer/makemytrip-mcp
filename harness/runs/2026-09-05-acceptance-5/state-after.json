@@ -1,0 +1,85 @@
+{
+  "device_id": "bf615af0-07b1-44d3-940b-751ac06499d0",
+  "cab_places": {
+    "goa": {
+      "address": "Goa beach, Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_city": false,
+      "secondary_text": "Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_airport": false,
+      "main_text": "Goa beach",
+      "place_id": "ChIJ6dgmPADBvzsRw231CmbGUKk"
+    },
+    "panaji": {
+      "address": "Panaji, Goa, India",
+      "is_city": true,
+      "secondary_text": "Goa, India",
+      "is_airport": false,
+      "main_text": "Panaji",
+      "place_id": "ChIJ2cxhM6nAvzsRYb7lJAsSmN0"
+    },
+    "bengaluru": {
+      "address": "Bengaluru, Karnataka, India",
+      "is_city": true,
+      "secondary_text": "Karnataka, India",
+      "is_airport": false,
+      "main_text": "Bengaluru",
+      "place_id": "ChIJbU60yXAWrjsR4E9-UejD3_g"
+    },
+    "goaairport": {
+      "address": "Dabolim Airport, Madgaon, Goa, India",
+      "is_city": false,
+      "secondary_text": "Madgaon, Goa, India",
+      "is_airport": false,
+      "main_text": "Dabolim Airport",
+      "place_id": "ChIJbdsIfAC5vzsRN8CnIj9lBMM"
+    },
+    "candolim": {
+      "address": "Candolim, Goa, India",
+      "is_city": true,
+      "secondary_text": "Goa, India",
+      "is_airport": false,
+      "main_text": "Candolim",
+      "place_id": "ChIJ-9mWyqPBvzsRiLWnuj0PQNQ"
+    },
+    "colva": {
+      "address": "Colva, Goa, India",
+      "is_city": true,
+      "secondary_text": "Goa, India",
+      "is_airport": false,
+      "main_text": "Colva",
+      "place_id": "ChIJHaWd7lizvzsRPCz4CQTapkk"
+    },
+    "palolem": {
+      "address": "Palolem Beach, Goa",
+      "is_city": false,
+      "secondary_text": "Goa",
+      "is_airport": false,
+      "main_text": "Palolem Beach",
+      "place_id": "ChIJuwJb0FFFvjsR9bsPS33GGx4"
+    },
+    "oldgoa": {
+      "address": "Old Goa, Goa, India",
+      "is_city": true,
+      "secondary_text": "Goa, India",
+      "is_airport": false,
+      "main_text": "Old Goa",
+      "place_id": "ChIJoZAO8Iy-vzsRdjnRm5YEPZw"
+    },
+    "dudhsagar": {
+      "address": "Dudhsagar Falls, Sonauli, Goa, India",
+      "is_city": false,
+      "secondary_text": "Sonauli, Goa, India",
+      "is_airport": false,
+      "main_text": "Dudhsagar Falls",
+      "place_id": "ChIJQ4srFBimvzsRJQI7KOdIlP0"
+    },
+    "benaulim": {
+      "address": "Benaulim, Goa, India",
+      "is_city": true,
+      "secondary_text": "Goa, India",
+      "is_airport": false,
+      "main_text": "Benaulim",
+      "place_id": "ChIJo35Aony0vzsR6TjRS13ikOI"
+    }
+  }
+}

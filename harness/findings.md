@@ -1163,3 +1163,75 @@ needs rethinking rather than the model.
 Both failing gates from run 4 now have fixes with regression tests. One more subject run
 closes Phase 3 - and it is cheap now: the call log means the audit needs nothing from the
 operator but a file copy.
+
+---
+
+## Run 2026-09-05 — acceptance run 5: **every mandatory gate passes**, and one server bug now gates Phase 3
+
+Full audit in `harness/runs/2026-09-05-acceptance-5/run-log.md`. 42 calls, empty workspace,
+Sonnet-5, 11-page deliverable.
+
+**First clean sweep.** H1 through H7, H-ARITH and GR1-GR4 all pass, completeness 9/9.
+
+### H1 passed because of one sentence
+
+Two subjects in a row had collapsed base/tax while the schema returned it correctly and
+`capabilities` stated the convention. The only thing that changed was a sentence in
+`mmt_intercity_options`' `note` telling the caller the rows carry `base_inr`/`tax_inr` and
+to report them apart. This subject split them on flights *and* hotels, adding a
+"Nightly (base+tax)" column of its own.
+
+The lesson generalises past this gate: **a correct schema that says nothing about how to use
+it is not enough.** Two runs of silence, one sentence, gate cleared.
+
+### The best behaviour of any run so far was not required by any gate
+
+Every GOI→BLR flight search failed. Instead of dropping the leg or inventing a fare:
+
+> **FLIGHT (chosen, ESTIMATED)** — MMT flight search failed twice for GOI→BLR on this date
+> (empty response / blocked) — **DATA GAP**. Estimate below uses the outbound non-stop
+> IndiGo fare as a same-class proxy.
+
+plus a paragraph calling it "a known site-blocking issue, not a real 'sold out' signal", a
+₹4,300-4,600 planning range, and a note marking it one of the two widest-uncertainty lines in
+the budget. Nothing in H1-H7 asks for that. It is the thesis of the project, produced
+unprompted.
+
+(It says the search failed "twice"; the log shows three attempts. Under-reporting its own
+effort, which is the harmless direction, but it is a self-report slip and the log is why we
+know.)
+
+### BUG-20 (new): flight search fails `empty_valid` intermittently, at ~99 s a time
+
+Four of five flight searches in this run returned "No flight itineraries parsed" after about
+99 seconds each. Runs 3, 4 and 5 all hit it. It is now the single biggest reliability problem
+in the server, and it did three things here:
+
+1. **It denied the run its return-leg data**, so BUG-19's departure-exclusion path was never
+   exercised by a subject. That fix stands on unit tests and one operator live check.
+2. **It pushed the run over the call budget** — five flight searches against "two plus one
+   retry". `PHASE2-TASKS.md` says exceeding the budget voids a run. Applied literally, this
+   sweep is void; applied to the rule's purpose (politeness, not hammering), a subject
+   retrying a call that returns nothing is behaving reasonably. Until BUG-20 is fixed, this
+   rule is a coin flip and will keep voiding otherwise-clean runs.
+3. **A 99-second failure is worse than a fast one.** The caller cannot distinguish a blocked
+   render from a genuinely empty route, and pays a minute and a half to find out. A shorter
+   timeout with a `blocked` verdict would be more honest than a long `empty_valid`.
+
+### BUG-17 is close to done
+
+Seven of eight place lookups resolved `high` and correct on the first attempt, including
+`Palolem Beach Goa` → `Palolem Beach` with **no** false warning - the refinement working.
+Five of seven registered places are `is_city: true`, the cleanest harvest of any run, against
+run 4's hostel and car-rental office.
+
+The residual: query variants are stripped only from the **right**, so a region-first query
+("Goa Dabolim Airport") falls through to `fallback`. It got the right airport by result
+ordering rather than by ranking, and warned about a correct answer. Token-subset matching
+instead of leading-phrase prefixes would close it.
+
+### Phase 3 status
+
+Gates: **clean**. Blocking the sign-off: **BUG-20**, both because it voids this run on a
+strict budget reading and because it prevented the one gate-relevant fix from being exercised.
+Fix it, then one more run - and that run is cheap.
