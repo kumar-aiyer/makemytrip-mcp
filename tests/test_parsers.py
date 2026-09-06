@@ -663,6 +663,153 @@ def test_place_match_quality() -> None:
     check("match: 'Calangute Goa' -> 'Goa beach' warns", "warning" in m)
 
 
+def test_compare_normalisation() -> None:
+    """The unit arithmetic is the whole reason mmt_intercity_options exists: flights are
+    per adult, trains per passenger, cabs per VEHICLE, and every subject that has mixed
+    them by hand has got something wrong."""
+    from mmt import compare as CMP
+
+    check("compare: flight duration string", CMP.duration_minutes("01h 20m") == 80)
+    check("compare: hours only", CMP.duration_minutes("12h") == 720)
+    check("compare: minutes only", CMP.duration_minutes("45m") == 45)
+    check("compare: already minutes", CMP.duration_minutes(690) == 690)
+    check("compare: unparseable is None, not a guess",
+          CMP.duration_minutes("about a day") is None)
+    check("compare: None stays None", CMP.duration_minutes(None) is None)
+    check("compare: fractional cab hours", CMP.minutes_from_hours(11.5) == 690)
+
+    check("compare: per adult x2", CMP.party_total(4367, "per adult", 2) == 8734)
+    check("compare: per passenger x2", CMP.party_total(1250, "per passenger", 2) == 2500)
+    check("compare: PER VEHICLE is not multiplied",
+          CMP.party_total(12161, "per vehicle", 2) == 12161)
+    check("compare: missing price stays None",
+          CMP.party_total(None, "per adult", 2) is None)
+
+    # dominance: dearer AND slower than something else
+    opts = [
+        {"label": "flight", "party_total_inr": 8734, "duration_min": 80},
+        {"label": "cab", "party_total_inr": 12161, "duration_min": 690},
+        {"label": "train", "party_total_inr": 2500, "duration_min": 800},
+        {"label": "unknown", "party_total_inr": None, "duration_min": None},
+    ]
+    CMP.mark_dominated(opts)
+    by = {o["label"]: o["dominated"] for o in opts}
+    check("compare: cab is dominated (dearer and slower than the flight)", by["cab"])
+    check("compare: the flight is not dominated", not by["flight"])
+    check("compare: a cheap slow train is NOT dominated - it is a real trade-off",
+          not by["train"])
+    check("compare: an option missing figures is never marked dominated",
+          not by["unknown"])
+
+    ordered = [o["label"] for o in CMP.sort_options(opts)]
+    check("compare: undominated first, then by price",
+          ordered[0] == "train" and ordered[-1] == "cab", str(ordered))
+
+
+def test_cab_place_candidates() -> None:
+    """Each mode names places in its own domain, so a natural cross-mode call like
+    Bengaluru -> GOI would fail the cab leg on an IATA code it has never seen."""
+    check("cab names: an IATA code offers its city names",
+          "goa" in CB.place_candidates("GOI"), str(CB.place_candidates("GOI")))
+    check("cab names: BLR offers bengaluru",
+          "bengaluru" in CB.place_candidates("BLR"))
+    check("cab names: a plain name is offered first",
+          CB.place_candidates("goa")[0] == "goa")
+    check("cab names: aliases still apply",
+          "kochi" in CB.place_candidates("cochin"))
+
+
+def test_intercity_options() -> None:
+    """Orchestration: one blocked mode must never cost the caller the other two, and a
+    mode that cannot apply must not spend a flight search on it."""
+    import asyncio
+    from unittest.mock import patch
+
+    from mmt import tools as T
+
+    flight_ok = {"itineraries": [
+        {"all_in_inr": 4367.0, "base_inr": 3222.0, "tax_inr": 1145.0,
+         "airline": "IndiGo", "flight_no": "6E 6554", "duration": "01h 20m",
+         "stops": 0, "depart": "19:00", "arrive": "20:20", "to": "GOI"},
+        {"all_in_inr": 3099.0, "airline": "FLY91", "flight_no": "IC 5302",
+         "duration": "01h 45m", "stops": 0, "alternate_airport": True, "to": "SDW"},
+    ]}
+    train_window = {"error": "outside the 60-day window", "kind": "not_in_window",
+                    "booking_opens": "2026-10-16"}
+    cab_ok = {"distance_km": 603, "approx_hours": 11.5, "cabs": [
+        {"all_in_inr": 12161, "base_inr": 11216, "tax_fees_inr": 945,
+         "car": "WagonR, Swift", "category": "HATCHBACK", "vendor": "Savaari"},
+        {"all_in_inr": 12407, "car": "Dzire, Etios", "category": "SEDAN",
+         "vendor": "Savaari"},
+    ]}
+
+    async def fake(name, **kw):
+        return {"mmt_flight_search": flight_ok, "mmt_train_search": train_window,
+                "mmt_cab_quote": cab_ok}[name]
+
+    # hermetic: the cab leg must not depend on what .state happens to hold
+    loose = lambda n: ({}, n.strip().lower())
+
+    with patch.object(T, "_sub", fake), patch.object(T.CB, "resolve_place_loose", loose):
+        r = asyncio.run(T.TOOLS["mmt_intercity_options"]["fn"](
+            origin="Bengaluru", dest="GOI", date="2026-12-15", adults=2))
+
+    modes = [o["mode"] for o in r["options"]]
+    check("intercity: flight and cab both priced", "flight" in modes and "cab" in modes)
+    flight = next(o for o in r["options"] if o["mode"] == "flight")
+    check("intercity: flight party total is per-adult x2",
+          flight["party_total_inr"] == 8734, str(flight["party_total_inr"]))
+    check("intercity: flight keeps base/tax apart",
+          flight["base_inr"] == 3222.0 and flight["tax_inr"] == 1145.0)
+    check("intercity: alternate-airport itinerary excluded from options",
+          all("FLY91" not in o["label"] for o in r["options"]))
+    check("intercity: and the exclusion is reported",
+          any(u["kind"] == "excluded_alternate_airports" for u in r["unavailable"]))
+
+    cab = next(o for o in r["options"] if o["mode"] == "cab")
+    check("intercity: cab party total is NOT multiplied by adults",
+          cab["party_total_inr"] == 12161, str(cab["party_total_inr"]))
+    check("intercity: cab duration from fractional hours",
+          cab["duration_min"] == 690, str(cab["duration_min"]))
+    check("intercity: cab is dominated by the flight", cab["dominated"] is True)
+
+    train = next((u for u in r["unavailable"] if u["mode"] == "train"), None)
+    check("intercity: a blocked train does not abort the run", train is not None)
+    check("intercity: and carries booking_opens forward",
+          train and train.get("booking_opens") == "2026-10-16")
+    check("intercity: flight search counted for the budget",
+          r["calls_made"].get("mmt_flight_search") == 1)
+    check("intercity: every option states what it excludes",
+          all("excludes" in o for o in r["options"]))
+
+    # a route with no airport pair must not spend a flight search
+    async def fake_cab_only(name, **kw):
+        if name == "mmt_flight_search":
+            raise AssertionError("spent a flight search on a route with no airports")
+        return {"mmt_train_search": train_window, "mmt_cab_quote": cab_ok}[name]
+
+    with patch.object(T, "_sub", fake_cab_only),          patch.object(T.CB, "resolve_place_loose", loose):
+        r2 = asyncio.run(T.TOOLS["mmt_intercity_options"]["fn"](
+            origin="goa", dest="kulem", date="2026-12-19", adults=2))
+    check("intercity: no airport pair means no flight search spent",
+          "mmt_flight_search" not in r2["calls_made"])
+    check("intercity: and it says why",
+          any(u["mode"] == "flight" and u["kind"] == "not_applicable"
+              for u in r2["unavailable"]))
+
+    # modes filter and validation
+    with patch.object(T, "_sub", fake), patch.object(T.CB, "resolve_place_loose", loose):
+        r3 = asyncio.run(T.TOOLS["mmt_intercity_options"]["fn"](
+            origin="Bengaluru", dest="GOI", date="2026-12-15", modes=["cab"]))
+    check("intercity: modes filter is honoured",
+          set(r3["calls_made"]) == {"mmt_cab_quote"}, str(r3["calls_made"]))
+    r4 = asyncio.run(T.TOOLS["mmt_intercity_options"]["fn"](
+        origin="Bengaluru", dest="GOI", date="2026-12-15", modes=["helicopter"]))
+    check("intercity: an unknown mode is bad_input", r4.get("kind") == "bad_input")
+    r5 = asyncio.run(T.TOOLS["mmt_intercity_options"]["fn"](
+        origin="Bengaluru", dest="GOI", date="2025-12-15"))
+    check("intercity: past date refused before any call", r5.get("kind") == "bad_input")
+
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
@@ -672,7 +819,9 @@ def main() -> int:
                test_recover_gating, test_null_prices_through_fetch,
                test_cab_summary_hours, test_cab_trip_validation,
                test_cache_byte_budget, test_oversize_body_through_fetch,
-               test_call_log, test_past_date_guard, test_place_match_quality):
+               test_call_log, test_past_date_guard, test_place_match_quality,
+               test_compare_normalisation, test_cab_place_candidates,
+               test_intercity_options):
         try:
             fn()
         except Exception as e:

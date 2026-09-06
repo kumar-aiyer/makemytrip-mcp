@@ -61,6 +61,44 @@ POI_WORDS = ("airport", "hotel", "hostel", "resort", "station", "park", "beach",
              "falls", "trek", "plantation", "temple", "church", "fort", "market")
 
 
+def place_candidates(name: str) -> list[str]:
+    """Names worth trying as a registered cab place, best first.
+
+    Each mode names places in its own domain: flights want an IATA code, trains a
+    station code, cabs a place harvested from MakeMyTrip's own autocomplete. A caller
+    pricing one leg across all three writes something like "Bengaluru" -> "GOI", and
+    the cab side then fails on 'GOI' even though 'goa' is registered. So a code is
+    also tried under the city names that map to it.
+    """
+    raw = (name or "").strip().lower()
+    out = [raw, ALIASES.get(raw, raw)]
+    code = raw.upper()
+    for table in (C.AIRPORTS, C.STATIONS):
+        for city, mapped in table.items():
+            if mapped.upper() == code:
+                out.append(city)
+    seen, uniq = set(), []
+    for n in out:
+        if n and n not in seen:
+            seen.add(n)
+            uniq.append(n)
+    return uniq
+
+
+def resolve_place_loose(name: str) -> tuple[dict[str, Any], str]:
+    """resolve_place, but also trying the city names a code maps to. Returns the place
+    and the name it matched under, so the caller can say which one it used."""
+    places = known_places()
+    for candidate in place_candidates(name):
+        if candidate in places:
+            return places[candidate], candidate
+    raise UnregisteredPlace(
+        f"no cab place object registered for {name!r}",
+        hint="Register it with mmt_cab_find_place, or pass a name that is already "
+             "known. Tried: " + ", ".join(place_candidates(name)),
+        details={"known_places": sorted(places)})
+
+
 def match_quality(place: dict[str, Any], query: str, tier: str) -> dict[str, Any]:
     """Grade how well a harvested place answers the query. Pure.
 

@@ -21,6 +21,15 @@ per-date breakdown. The fields are `nightly_base_inr`, `nightly_tax_inr`, `night
 `nightly_` prefix is load-bearing. Anything that says "stay totals" or
 `all_in_per_night_inr` predates 2026-09-05 and is wrong.
 
+For an intercity leg use `mmt_intercity_options` rather than calling the flight, train and
+cab tools separately and comparing by hand. Flights and trains are quoted per person and a
+cab per vehicle; mixing those units is the single most common way a trip total goes wrong,
+and the tool does that arithmetic once, keeping `unit` visible on every row. It marks an
+option `dominated` when another is both cheaper and faster - beyond that it does not
+recommend, because the trade-off depends on the whole itinerary. It also surfaces the train
+leg whether or not you would have thought to ask, which matters: outside the 60-day
+reservation window the honest answer is `not_in_window`, not silence.
+
 For a multi-stop trip use `mmt_price_itinerary` rather than looping `mmt_hotel_search`. It
 multiplies each leg by its own nights and sums the legs it just fetched, returning
 `total_all_in_estimate_inr` in the same object, so the total cannot drift from the rows above

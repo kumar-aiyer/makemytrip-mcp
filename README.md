@@ -24,6 +24,7 @@ Runs anywhere that speaks MCP over stdio: **Claude Cowork** (as a plugin), **Ope
 | `mmt_train_search` | Route + date → trains with live per-class waitlist status, fare, confirmation odds |
 | `mmt_station_city` | Station codes → city codes, tying a rail leg to its hotel |
 | `mmt_cab_quote` | Two places + date → every vehicle class, base/tax/all-in **and per-km**; optional `return_date` for round trips |
+| `mmt_intercity_options` | One leg by **flight, train and cab at once**, normalised to a party total with the source unit kept visible; marks options that are dearer *and* slower as `dominated` and leaves the choice to you |
 | `mmt_cab_find_place` | Register a cab location by name (drives the site's own form) |
 | `mmt_cab_add_place` | Register one from a pasted URL — the reliable manual path |
 | `mmt_selftest` | Live check of what still works, and which tier the router is using |

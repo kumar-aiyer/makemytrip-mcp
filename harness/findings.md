@@ -841,3 +841,75 @@ ignored within a run.
   window should be retired as a designed trigger, or the prompt should invite a transport
   comparison. The cab-place gap has fired 4/4 and carries gap-recovery on its own.
 - No re-run performed for these two fixes, by instruction.
+
+---
+
+## Run 2026-09-05 — `mmt_intercity_options`: one leg, three modes, one unit
+
+Offline **211/211** (37 new assertions). Verified live on Bengaluru → GOI.
+
+The reason for building it is not convenience. **It makes rail unskippable.** Four subjects
+in a row never called `mmt_train_search`, so H2 has never been exercised — not because the
+tool was broken but because nothing made comparing modes the natural move. Now the only way
+to get flight fares for a leg is a call that also returns trains and cabs, and a train
+outside the 60-day window reports `not_in_window` whether the caller thought to ask or not.
+
+### What it normalises, and why that is the point
+
+Three modes, three units, three time formats:
+
+| | unit | duration as returned |
+|---|---|---|
+| flights | per adult | `"01h 20m"`, a string |
+| trains | per passenger | minutes, an int |
+| cabs | **per vehicle** | approximate hours, a float |
+
+Every option now carries `party_total_inr` *and* `per_unit_inr` *and* the `unit` it came
+in. Multiplying the per-vehicle figure by head count, or failing to multiply the per-adult
+one, is the BUG-16 family of error and it is where hand-built itinerary totals go wrong.
+Doing it once here, with the convention still visible, is the whole design.
+
+Live proof from the smoke test — the arithmetic that used to be the model's problem:
+
+```
+flight  IndiGo 6E 6554 nonstop    8734  per adult    4367   80 min   dominated False
+cab     WagonR/Swift HATCHBACK   12161  per vehicle 12161  690 min   dominated True
+```
+
+### What it refuses to do
+
+**It does not recommend.** `dominated: true` marks an option both dearer *and* slower than
+another — a fact. Whether four extra hours is worth Rs 3,000 depends on the rest of the
+itinerary and belongs to the caller. In the live run that left three flights and three cabs,
+with the Rs 9,154 flight correctly dominated by the Rs 8,734 ones at equal duration, and
+every cab dominated. A cheap slow train is explicitly *not* dominated — it is a real
+trade-off, and there is a test asserting so.
+
+**It does not estimate door-to-door time.** A flight is 80 minutes in the air and some
+hours kerb to kerb, and the difference is real — but inventing it would be fabrication. Each
+option states what it `excludes` ("airport transfers at both ends") so the caller can price
+those legs properly.
+
+### Three things the build turned up
+
+- **Partial failure is the normal case, so it is designed for.** The first live call
+  returned zero options and three clean reasons: flights `empty_valid`, trains
+  `not_in_window`, cabs `unregistered_place`. Nothing aborted anything else. That is the
+  `mmt_price_itinerary` pattern applied to modes.
+- **Each mode names places in a different domain**, and a natural call exposes it
+  immediately: "Bengaluru" → "GOI" is fine for flights, meaningless to the cab funnel.
+  `cabs.place_candidates` now also tries the city names an IATA or station code maps to, and
+  the response says which name it actually priced. Without this the tool half-fails on every
+  realistic call.
+- **Mode guards protect the flight budget.** No airport pair resolves for goa → kulem, so no
+  flight search is spent on a 40 km day trip. There is a test that fails loudly if one ever is.
+
+### Sub-calls go through the tool wrapper, deliberately
+
+`_sub()` dispatches through `TOOLS[name]["fn"]` rather than calling `FL.search` directly, so
+each leg lands in `calls.jsonl` as its own entry. Routing around the wrapper would have made
+this one tool opaque to H6 and to flight-budget accounting — the exact thing the call log was
+built to prevent. `calls_made` in the response makes the budget cost explicit too.
+
+**This is a new tool, so hosts need one reconnect to see it** — `tools/list` is snapshotted
+at connect.

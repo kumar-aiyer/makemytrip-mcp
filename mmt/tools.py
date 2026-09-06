@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from . import cabs as CB
 from . import calllog as CALLLOG
+from . import compare as CMP
 from . import config as C
 from . import dates as D
 from . import flights as FL
@@ -320,6 +321,211 @@ async def mmt_station_city(origin: str, dest: str, fresh: bool = False) -> dict:
                                     TR.resolve_station(dest), fresh=fresh)
 
 
+# ------------------------------------------------------------------ intercity compare
+
+MODES = ("flight", "train", "cab")
+MAX_PER_MODE = 3
+
+
+def _mode_list(modes) -> list[str]:
+    if modes is None:
+        return list(MODES)
+    if not isinstance(modes, list) or not modes:
+        raise BadInput("modes must be a non-empty array, or omitted for all of them")
+    bad = [m for m in modes if m not in MODES]
+    if bad:
+        raise BadInput(f"unknown mode(s) {bad}; known: {list(MODES)}")
+    return list(dict.fromkeys(modes))
+
+
+async def _sub(name: str, **kwargs) -> dict:
+    """Call another tool through its own wrapper, so every leg lands in the call log as
+    its own entry. Routing around the wrapper would make this one tool opaque to H6 and
+    to the flight-search budget, which is exactly what the log exists to prevent."""
+    return await TOOLS[name]["fn"](**kwargs)
+
+
+@tool("mmt_intercity_options", _obj({
+    "origin": {**S_STR, "description": "City name; also an IATA/station code where one "
+                                       "applies. Cab legs need a registered place."},
+    "dest": S_STR,
+    "date": {**S_STR, "description": "ISO YYYY-MM-DD."},
+    "adults": S_INT,
+    "modes": {"type": "array", "items": {"type": "string"},
+              "description": "Subset of flight/train/cab. Omit for all three."},
+    "cabin": {**S_STR, "description": "Flights only: E, W or B."},
+}, ["origin", "dest", "date"]))
+async def mmt_intercity_options(origin: str, dest: str, date: str, adults: int = 2,
+                                modes: list | None = None, cabin: str = "E",
+                                fresh: bool = False) -> dict:
+    """Price one intercity leg by flight, train and cab at once, on comparable terms.
+
+    Every option carries `party_total_inr` for the whole party alongside `per_unit_inr`
+    and the `unit` it came in - flights and trains are per person, a cab is per vehicle,
+    and conflating them is the most common way an itinerary total goes wrong.
+    `duration_min` is normalised from three different source formats.
+
+    **This does not recommend.** `dominated: true` marks an option that is both dearer
+    and slower than another, which is a fact; choosing among the rest is a judgement
+    about your whole itinerary - baggage, an early check-in, whether a 12-hour drive
+    costs a day you wanted on a beach - and it is yours to make.
+
+    `duration_min` is in-vehicle time as the source reports it. Airport and station
+    transfers are NOT included; each option lists what it excludes, and those legs can
+    be priced with mmt_cab_quote.
+
+    Modes that cannot apply are skipped rather than guessed at - no airport pair means
+    no flight search is spent - and modes that fail land in `unavailable` with the
+    reason, so one blocked leg never costs you the other two. A train leg outside the
+    60-day reservation window reports `not_in_window` with the date booking opens; that
+    is the tool working, not failing.
+
+    SLOW: a flight search alone is 30-60 s, so expect up to about 90 s for all three.
+    It spends one flight search, which counts against any per-session budget you hold.
+    """
+    D.not_past(date, "date")
+    wanted = _mode_list(modes)
+    options: list[dict] = []
+    unavailable: list[dict] = []
+    calls: dict[str, int] = {}
+
+    def note(mode: str, kind: str, message: str, **extra) -> None:
+        unavailable.append({"mode": mode, "kind": kind, "reason": message, **extra})
+
+    if "flight" in wanted:
+        try:
+            FL.resolve_airport(origin), FL.resolve_airport(dest)
+        except MMTError as e:
+            note("flight", "not_applicable", e.message,
+                 hint="No airport pair resolves for this route, so no flight search "
+                      "was spent on it.")
+        else:
+            calls["mmt_flight_search"] = 1
+            r = await _sub("mmt_flight_search", origin=origin, dest=dest, date=date,
+                           adults=adults, cabin=cabin, fresh=fresh)
+            if r.get("error"):
+                note("flight", r.get("kind") or "error", r["error"])
+            else:
+                everything = r.get("itineraries", [])
+                into = [i for i in everything if not i.get("alternate_airport")]
+                skipped = len(everything) - len(into)
+                cheapest = sorted(into, key=lambda x: x.get("all_in_inr") or 0)
+                for it in cheapest[:MAX_PER_MODE]:
+                    options.append({
+                        "mode": "flight",
+                        "label": f"{it.get('airline')} {it.get('flight_no')}"
+                                 f"{'' if it.get('stops') else ' nonstop'}",
+                        "per_unit_inr": it.get("all_in_inr"), "unit": "per adult",
+                        "party_total_inr": CMP.party_total(it.get("all_in_inr"),
+                                                           "per adult", adults),
+                        "base_inr": it.get("base_inr"), "tax_inr": it.get("tax_inr"),
+                        "duration_min": CMP.duration_minutes(it.get("duration")),
+                        "depart": it.get("depart"), "arrive": it.get("arrive"),
+                        "excludes": ["airport transfers at both ends"],
+                        "source_tool": "mmt_flight_search",
+                    })
+                if skipped:
+                    note("flight", "excluded_alternate_airports",
+                         f"{skipped} itinerary(ies) land at a different airport and are "
+                         f"not fares into {dest}.")
+
+    if "train" in wanted:
+        try:
+            TR.resolve_station(origin), TR.resolve_station(dest)
+        except MMTError as e:
+            note("train", "not_applicable", e.message)
+        else:
+            calls["mmt_train_search"] = 1
+            r = await _sub("mmt_train_search", origin=origin, dest=dest, date=date,
+                           fresh=fresh)
+            if r.get("error"):
+                extra = {k: r[k] for k in ("booking_opens", "hint") if k in r}
+                note("train", r.get("kind") or "error", r["error"], **extra)
+            else:
+                priced = []
+                for tr in r.get("trains", []):
+                    cheap = next((c for c in tr.get("classes", [])
+                                  if isinstance(c.get("fare_inr"), (int, float))
+                                  and c["fare_inr"] > 0), None)
+                    if cheap:
+                        priced.append((tr, cheap))
+                priced.sort(key=lambda p: p[1]["fare_inr"])
+                for tr, cheap in priced[:MAX_PER_MODE]:
+                    options.append({
+                        "mode": "train",
+                        "label": f"{tr.get('train_number')} {tr.get('train_name')} "
+                                 f"({cheap.get('class')})",
+                        "per_unit_inr": cheap.get("fare_inr"),
+                        "unit": "per passenger",
+                        "party_total_inr": CMP.party_total(cheap.get("fare_inr"),
+                                                           "per passenger", adults),
+                        "duration_min": CMP.duration_minutes(tr.get("duration_min")),
+                        "depart": tr.get("departure"), "arrive": tr.get("arrival"),
+                        "availability": cheap.get("status"),
+                        "excludes": ["station transfers at both ends"],
+                        "source_tool": "mmt_train_search",
+                    })
+
+    if "cab" in wanted:
+        # Each mode names places in its own domain - IATA for flights, station codes for
+        # trains, harvested places for cabs - so a natural "Bengaluru" -> "GOI" call
+        # would fail the cab leg on a code. Try the city names a code maps to as well.
+        try:
+            _, cab_o = CB.resolve_place_loose(origin)
+            _, cab_d = CB.resolve_place_loose(dest)
+        except MMTError as e:
+            note("cab", e.kind, e.message, hint=e.hint)
+            cab_o = cab_d = None
+        if cab_o is None:
+            r = {"error": None}
+        else:
+            calls["mmt_cab_quote"] = 1
+            r = await _sub("mmt_cab_quote", origin=cab_o, dest=cab_d, date=date,
+                           fresh=fresh)
+            if cab_o != origin.strip().lower() or cab_d != dest.strip().lower():
+                note("cab", "resolved_names",
+                     f"cab leg priced as {cab_o!r} -> {cab_d!r}; the names given resolve "
+                     f"to codes the cab funnel does not know.")
+        if r.get("error"):
+            extra = {k: r[k] for k in ("hint",) if k in r}
+            note("cab", r.get("kind") or "error", r["error"], **extra)
+        else:
+            seen: set = set()
+            for cab in r.get("cabs", []):
+                if cab.get("category") in seen:
+                    continue
+                seen.add(cab.get("category"))
+                options.append({
+                    "mode": "cab",
+                    "label": f"{cab.get('car')} ({cab.get('category')}, "
+                             f"{cab.get('vendor')})",
+                    "per_unit_inr": cab.get("all_in_inr"), "unit": "per vehicle",
+                    "party_total_inr": CMP.party_total(cab.get("all_in_inr"),
+                                                       "per vehicle", adults),
+                    "base_inr": cab.get("base_inr"),
+                    "tax_inr": cab.get("tax_fees_inr"),
+                    "duration_min": CMP.minutes_from_hours(r.get("approx_hours")),
+                    "distance_km": r.get("distance_km"),
+                    "excludes": [],
+                    "source_tool": "mmt_cab_quote",
+                })
+                if len(seen) >= MAX_PER_MODE:
+                    break
+
+    CMP.mark_dominated(options)
+    return {
+        "route": f"{origin} -> {dest}", "date": date, "adults": adults,
+        "options": CMP.sort_options(options),
+        "option_count": len(options),
+        "unavailable": unavailable,
+        "calls_made": calls,
+        "note": "party_total_inr is the whole party; per_unit_inr with `unit` is the "
+                "convention the source quoted in. duration_min is in-vehicle time only "
+                "- see each option's `excludes`. `dominated` means dearer AND slower "
+                "than another option; the rest is your call.",
+    }
+
+
 # --------------------------------------------------------------------------- cabs
 
 @tool("mmt_cab_quote", _obj({
@@ -432,6 +638,13 @@ async def mmt_capabilities() -> dict:
             "price_itinerary": "multi-stop total, summed server-side",
             "train_search": "trains with live per-class availability",
             "cab_quote": "outstation cabs by vehicle class",
+            "intercity_options": "one leg priced by flight, train and cab together, "
+                                 "normalised to a party total with the source unit kept "
+                                 "visible. PREFER THIS for an intercity leg: comparing "
+                                 "per-adult fares against a per-vehicle cab by hand is "
+                                 "where itinerary totals go wrong. It does not "
+                                 "recommend - it marks options that are both dearer and "
+                                 "slower as dominated and leaves the choice to you",
             "station_city": "station code to city code",
             "flight_search": "fares per adult, base and tax apart, cheapest first - "
                              "but SLOW (~30-60 s) and it answers with nearby airports "
