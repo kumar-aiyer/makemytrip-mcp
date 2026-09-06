@@ -1022,3 +1022,85 @@ are opt-in there and switched on only by the comparison tool, so the raw data to
 raw - a caller who wants the Rs 375 sleeper can still have it, and H2 sees what it always
 saw. Whenever a filter runs, a `filtered` summary reports what was dropped and why; a filter
 that cannot be audited is just a smaller lie.
+
+---
+
+## Run 2026-09-05 — Phase 3, acceptance run 4: **H2 finally passes; H5 fails on a bug we shipped**
+
+Full audit in `harness/runs/2026-09-05-acceptance-4/run-log.md`. 35 calls, server-recorded,
+empty workspace, Sonnet-5.
+
+### H2 passes decisively, and that is the point of the last three days
+
+Four runs, four subjects, and not one had ever called `mmt_train_search` — not because rail
+was broken but because nothing made comparing modes the natural move. This subject used
+`mmt_intercity_options` three times and wrote, unprompted:
+
+> Trains for these December dates are outside Indian Railways' 60-day booking window (opens
+> 16 Oct 2026 for the outbound, 22 Oct 2026 for the return); the fares shown are
+> MakeMyTrip's own indicative quotes for the nearest bookable date on the same weekday, not
+> the actual 15/21 Dec fare.
+
+That is the indicative-fare design working exactly as intended: a real number where there
+used to be silence, and a subject that repeated the caveat rather than laundering it.
+**H-ARITH was exact again** (134,092 line-by-line, 67,046 per person, every derived line
+reconciling) and **H6 spot-checked 5/5**.
+
+### BUG-19 (new, serious): `alternate_airport` only looks at arrivals
+
+`flights.py` flags an itinerary when it *lands* somewhere other than the airport asked for.
+Nothing checks the **departure**, and the `note` is emitted only in that direction. So on a
+GOI→BLR search:
+
+```
+FLY91 IC 5301   SDW->BLR   Rs 3,699   alternate_airport = None   note = None
+IndiGo 6E 6163  GOI->BLR   Rs 5,994
+```
+
+`mmt_intercity_options` filters on that flag, so it presented IC 5301 as the cheapest,
+undominated, unflagged return option. The subject took it, and its itinerary now says
+*"Sedan cab to Dabolim Airport (~40 km, ~1 hr). Depart Goa 09:20 on FLY91 IC 5301."* —
+**a trip that cannot be taken**, since the flight leaves from Sindhudurg 85 km away. The
+return airfare is understated by 38% and the recommendation rests on it.
+
+Run 2's subject caught this trap unaided. Run 4's subject was misled *by the tool built to
+prevent this class of error*. That is the sharpest lesson available: a comparison layer
+inherits every blind spot of what it aggregates, and it converts a visible trap into an
+invisible one. Fix is two-sided — flag departure mismatches in `flights.py` and filter on
+`from` as well as `to` in `intercity_options`.
+
+### BUG-17 worked, and a subject acted on it
+
+The ranking fix landed: **"Calangute Goa" now resolves to `Calangute`** (`is_city: true`)
+where the previous run got "Goa beach". Better, the warning drove a self-correction:
+
+| query | resolved to | confidence |
+|---|---|---|
+| "Goa Airport Dabolim" | **Comfy Car Rentals Goa** | low, warned |
+| "Goa International Airport" | **Manohar International Airport (GOX)** | medium, warned |
+| "Dabolim Airport Goa" | **Dabolim Airport** | high |
+
+Three attempts, then it priced its transfers against the right airport. Without the warning
+it would have quoted cab fares from a car-rental office. **This is the first time a
+disclosure this project added visibly changed what a subject did.**
+
+Refinement needed: `"Palolem Goa"` → `Palolem` scored **low** on an `exact_shortened` tier
+solely because MakeMyTrip marks Palolem `is_city: false`. A false warning on a correct
+answer, and false warnings are how real ones get ignored. A strong tier should not be
+downgraded by `is_city` alone.
+
+### H1 is a pattern, not an outlier
+
+This run was meant to settle whether run 3's H1 failure was a one-off. It was not — two
+subjects in a row collapsed base/tax into all-in, though every call returns the split and
+`capabilities.pricing_conventions.split` states it plainly. Run 2 did print
+`3,222 + 1,145 = 4,367`, so it is achievable. A gate two of three subjects fail is telling us
+about the surface rather than the subjects: `mmt_intercity_options` carries `base_inr` and
+`tax_inr` on its rows and never mentions them in its `note`, which is the cheapest place to
+push back before touching the prompt.
+
+### Phase 3 status
+
+Nine gates pass, two fail. **H5's failure is ours to fix, and H1's is arguably ours too.**
+Phase 3 does not close on this run — but for the first time nothing is unscoreable, and both
+failures point at code rather than at evidence.
