@@ -1235,3 +1235,66 @@ instead of leading-phrase prefixes would close it.
 Gates: **clean**. Blocking the sign-off: **BUG-20**, both because it voids this run on a
 strict budget reading and because it prevented the one gate-relevant fix from being exercised.
 Fix it, then one more run - and that run is cheap.
+
+---
+
+## Run 2026-09-06 — BUG-20 fixed: a block says so in 30 s instead of an empty route in 99
+
+Offline **285/285** (14 new assertions), 19/19, 33/33. Verified live on the route that failed
+three times in run 5.
+
+### What was wrong
+
+`harvest_flight_search` waited out its entire 90-second deadline and then returned whatever
+it had — usually `""` — which `parse_stream` turned into zero itineraries and the tool
+reported as `empty_valid`: *"No flight itineraries parsed."*
+
+Two separate errors in that. **A search that has produced no stream at all after half a
+minute is not going to produce one**, so the remaining sixty seconds bought nothing. And
+*"no flights on this route"* is a different claim from *"the page never opened its data
+stream"* — the first is a fact about Goa, the second is a block. Saying the second quickly is
+worth more than saying the first slowly and wrongly.
+
+### The fix
+
+A pure `stream_verdict()` decides `continue` / `done` / `blocked` from elapsed time, bytes
+collected and how many polls have passed without growth — pure so the timing rules are
+testable without a browser:
+
+- **no bytes at all by 30 s** → the funnel did not take. Re-visit the funnel **once inside
+  the call**, then give up with `Blocked` naming what happened.
+- **bytes that stop growing for ~7.5 s** → the stream has finished. Return it; if it parses
+  to nothing, `empty_valid` is then an honest answer rather than a timeout in disguise.
+- **20 KB** → a full result set, stop early.
+
+The internal re-funnel is the part that matters. `flights.search` already caught `Blocked`
+and retried once on a recovered browser, so that path was free; but a retry the *caller*
+makes costs another tool call and, in an acceptance run, another unit of the flight-search
+budget. Doing one re-navigation inside the call turns three caller-level retries at 99 s each
+into one call that fixes itself.
+
+### Live
+
+The GOI→BLR leg that failed three times in run 5 returned **25 itineraries in 35 s**, then
+**28 s** on a second try. Both well inside the old 99-second failure, and the data is real.
+
+### And a cosmetic bug the live check caught
+
+The new both-ends note read *"13 depart from a different airport than **goi**"*.
+`" and ".join(parts).capitalize()` uppercases the first character **and lowercases every
+other one** — and the rest of that string is airport codes. Fixed to slice the first
+character instead. A reminder that `.capitalize()` is almost never what you want on a string
+containing identifiers.
+
+### BUG-19 at scale, incidentally
+
+That same note reports **13 of 25** itineraries departing from a different airport on a
+GOI→BLR search, and 14 on the run before. More than half of what MakeMyTrip volunteers for a
+Goa departure leaves from another state. The severity estimate in the BUG-19 entry was not an
+outlier reading.
+
+### Phase 3
+
+The blocker is cleared. One more subject run should close it — and the flight-budget question
+that made run 5 ambiguous should not recur, because the server now fixes its own funnel
+rather than making the caller spend searches on it.

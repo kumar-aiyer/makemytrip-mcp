@@ -202,6 +202,32 @@ def _walk(obj: Any):
             yield from _walk(v)
 
 
+# BUG-20. The flight harvester used to wait out its whole 90-second deadline and then
+# return whatever it had - usually nothing - which the parser reported as `empty_valid`:
+# "no itineraries". Four of five searches in acceptance run 5 failed that way, ~99 s each.
+# Two things were wrong with that. A search that has produced no stream at all after half
+# a minute is not going to; and "no itineraries on this route" is a different claim from
+# "the page never opened a stream", which is a block. Saying the second quickly is worth
+# more than saying the first slowly and wrongly.
+STREAM_GRACE_S = 30.0     # no bytes at all by here means the funnel did not take
+STALL_POLLS = 3           # ~7.5 s without growth means the stream has finished
+ENOUGH_BYTES = 20_000     # a full result set; stop early and get on with it
+
+
+def stream_verdict(*, waited_s: float, best_len: int, stalled_polls: int,
+                   grace_s: float = STREAM_GRACE_S,
+                   stall_polls: int = STALL_POLLS,
+                   enough: int = ENOUGH_BYTES) -> str:
+    """continue | done | blocked. Pure, so the timing rules are testable."""
+    if best_len >= enough:
+        return "done"
+    if best_len and stalled_polls >= stall_polls:
+        return "done"
+    if not best_len and waited_s >= grace_s:
+        return "blocked"
+    return "continue"
+
+
 async def harvest_flight_search(origin: str, dest: str, iso_date: str, *,
                                 adults: int = 2, children: int = 0, infants: int = 0,
                                 cabin: str = "E", timeout_ms: int = 90_000) -> str:
@@ -238,6 +264,8 @@ async def harvest_flight_search(origin: str, dest: str, iso_date: str, *,
         done: set[int] = set()
         deadline = timeout_ms / 1000.0
         waited = 0.0
+        stalled = 0
+        refunnelled = False
         while waited < deadline:
             try:
                 await page.wait_for_timeout(2500)
@@ -253,6 +281,7 @@ async def harvest_flight_search(origin: str, dest: str, iso_date: str, *,
                          "happening, mmt_setup_status will say whether the browser is "
                          "healthy.") from None
             waited += 2.5
+            grew = False
             for resp in list(responses):
                 # Awaiting the same response twice spawns a second waiter that
                 # outlives the page and logs a stray "Target closed".
@@ -263,6 +292,36 @@ async def harvest_flight_search(origin: str, dest: str, iso_date: str, *,
                     body = await resp.text()
                     if len(body) > len(best):
                         best = body
-            if len(best) > 20_000:
+                        grew = True
+            stalled = 0 if grew else stalled + 1
+
+            verdict = stream_verdict(waited_s=waited, best_len=len(best),
+                                     stalled_polls=stalled)
+            if verdict == "done":
                 break
+            if verdict == "blocked":
+                if not refunnelled:
+                    # One re-visit of the funnel inside this call, rather than making
+                    # the caller spend another search on it. The funnel not taking is
+                    # the known cause (findings.md, the Akamai 200-ok stub), and
+                    # re-navigating costs ~10 s against the ~90 s of grinding it
+                    # replaces - and against a whole extra tool call for the caller.
+                    refunnelled = True
+                    stalled = 0
+                    await page.goto(C.WWW + "/flights/?cc=IN&lang=eng",
+                                    wait_until="domcontentloaded", timeout=timeout_ms)
+                    await page.wait_for_timeout(4000)
+                    await _dismiss_popups(page)
+                    await page.goto(url, wait_until="domcontentloaded",
+                                    timeout=timeout_ms)
+                    waited += 10.0
+                    continue
+                raise Blocked(
+                    f"The flight results page produced no search stream in "
+                    f"{waited:.0f}s, across two attempts at the funnel.",
+                    hint="This is a block, not an empty route - MakeMyTrip served the "
+                         "page without its data stream. Retry once; if it persists, "
+                         "mmt_setup_status will say whether the browser is healthy.",
+                    details={"stream_responses_seen": len(responses),
+                             "refunnelled": True})
         return best

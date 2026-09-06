@@ -306,8 +306,11 @@ async def search(origin: str, dest: str, iso_date: str, *, adults: int = 2,
         if leaving_elsewhere:
             parts.append(f"{len(leaving_elsewhere)} depart from a different airport "
                          f"than {origin.upper()}")
+        # NOT .capitalize() - it lowercases the rest of the string, and the rest of
+        # this string is airport codes.
+        joined = " and ".join(parts)
         out["note"] = (
-            " and ".join(parts).capitalize() +
+            joined[:1].upper() + joined[1:] +
             " - MakeMyTrip volunteers nearby airports at both ends. Each itinerary "
             "carries its own `from`/`to`; anything flagged `alternate_airport` is not "
             f"a fare between {origin.upper()} and {dest.upper()}, and a cheaper one "

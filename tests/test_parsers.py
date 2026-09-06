@@ -1139,6 +1139,112 @@ def test_match_quality_no_false_warning() -> None:
     check("match: the car-rental fallback from run 4 still warns", "warning" in m3)
 
 
+def test_stream_verdict() -> None:
+    """BUG-20: the harvester waited out its full 90 s and then reported `empty_valid`,
+    which claims 'no flights on this route' when the truth was 'the page never opened a
+    stream'. Four of five searches in run 5 failed that way at ~99 s each."""
+    from mmt.harvest import stream_verdict as v
+
+    check("verdict: keep waiting early on", v(waited_s=5, best_len=0,
+                                              stalled_polls=2) == "continue")
+    check("verdict: nothing at all by the grace window is a block",
+          v(waited_s=30, best_len=0, stalled_polls=12) == "blocked")
+    check("verdict: a full result set stops immediately",
+          v(waited_s=12, best_len=25_000, stalled_polls=0) == "done")
+    check("verdict: a stream that stopped growing is finished",
+          v(waited_s=40, best_len=5_000, stalled_polls=3) == "done")
+    check("verdict: a stream still growing keeps going",
+          v(waited_s=40, best_len=5_000, stalled_polls=1) == "continue")
+    check("verdict: any bytes at all means it is not a block",
+          v(waited_s=80, best_len=1, stalled_polls=0) == "continue")
+
+
+def test_harvest_blocks_instead_of_grinding() -> None:
+    """A search that produces no stream must re-try the funnel once and then say
+    `blocked` - not spend 90 seconds and hand back an empty body for the parser to
+    misreport as an empty route."""
+    import asyncio
+    from unittest.mock import patch
+
+    from mmt import harvest as HV
+    from mmt.errors import Blocked
+
+    class FakePage:
+        def __init__(self, deliver_after=None, body=""):
+            self.gotos, self.polls, self.cb = [], 0, None
+            self.deliver_after, self.body = deliver_after, body
+
+        def on(self, event, cb):
+            self.cb = cb
+
+        async def goto(self, url, **kw):
+            self.gotos.append(url)
+
+        async def wait_for_timeout(self, ms):
+            self.polls += 1
+            if self.deliver_after and self.polls == self.deliver_after:
+                class Resp:
+                    url = "https://x/search-stream"
+                    async def text(inner):
+                        return self.body
+                self.cb(Resp())
+
+    class FakeCM:
+        def __init__(self, page):
+            self.page = page
+
+        async def __aenter__(self):
+            return self.page
+
+        async def __aexit__(self, *a):
+            return False
+
+    class FakeSession:
+        def __init__(self, page):
+            self._page = page
+
+        def page(self):
+            return FakeCM(self._page)
+
+    async def noop(*a, **k):
+        return None
+
+    # 1. nothing ever arrives
+    page = FakePage()
+    with patch.object(HV, "SESSION", FakeSession(page)), \
+         patch.object(HV, "_dismiss_popups", noop):
+        try:
+            asyncio.run(HV.harvest_flight_search("BLR", "GOI", "2026-12-15"))
+            check("harvest: no stream raises rather than returning empty", False)
+        except Blocked as e:
+            check("harvest: no stream raises rather than returning empty", True)
+            check("harvest: and calls it a block, not an empty route",
+                  "no search stream" in e.message, e.message)
+            check("harvest: after re-visiting the funnel once",
+                  e.details.get("refunnelled") is True, str(e.details))
+    check("harvest: the funnel was re-navigated (4 gotos, not 2)",
+          len(page.gotos) == 4, str(len(page.gotos)))
+
+    # 2. a full stream arrives - no re-funnel, body returned
+    page2 = FakePage(deliver_after=2, body="x" * 25_000)
+    with patch.object(HV, "SESSION", FakeSession(page2)), \
+         patch.object(HV, "_dismiss_popups", noop):
+        body = asyncio.run(HV.harvest_flight_search("BLR", "GOI", "2026-12-15"))
+    check("harvest: a delivered stream is returned", len(body) == 25_000)
+    check("harvest: and the funnel is not re-navigated",
+          len(page2.gotos) == 2, str(len(page2.gotos)))
+
+    # 3. a small stream that stops growing returns quickly, and stays empty_valid
+    #    territory for the parser rather than being called a block
+    page3 = FakePage(deliver_after=2, body="tiny")
+    with patch.object(HV, "SESSION", FakeSession(page3)), \
+         patch.object(HV, "_dismiss_popups", noop):
+        body3 = asyncio.run(HV.harvest_flight_search("BLR", "GOI", "2026-12-15"))
+    check("harvest: a small finished stream is returned, not blocked", body3 == "tiny")
+    check("harvest: and it stops early rather than waiting out the deadline",
+          page3.polls < 12, str(page3.polls))
+
+
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
@@ -1155,6 +1261,7 @@ def main() -> int:
                test_alternate_airport_both_ends,
                test_intercity_excludes_alternate_departures,
                test_match_quality_no_false_warning,
+               test_stream_verdict, test_harvest_blocks_instead_of_grinding,
                test_intercity_indicative_train,
                test_intercity_options):
         try:
