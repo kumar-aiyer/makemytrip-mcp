@@ -75,7 +75,9 @@ def mark_dominated(options: list[dict[str, Any]]) -> list[dict[str, Any]]:
     the caller's judgement about their own itinerary. Dominance just clears away the
     rows no judgement could pick.
 
-    An option missing either figure is never marked - we cannot show it is beaten.
+    An option missing either figure is never marked - we cannot show it is beaten. An
+    option flagged `indicative` (a fare for a different date) can be dominated but never
+    dominates: it is not a price you can actually pay on the day in question.
     """
     for a in options:
         a["dominated"] = False
@@ -84,7 +86,9 @@ def mark_dominated(options: list[dict[str, Any]]) -> list[dict[str, Any]]:
                   and o.get("duration_min") is not None]
     for a in comparable:
         for b in comparable:
-            if a is b:
+            # An indicative price is for a different date, so it cannot prove another
+            # option is beaten - it can only be beaten itself.
+            if a is b or b.get("indicative"):
                 continue
             cheaper_or_equal = b["party_total_inr"] <= a["party_total_inr"]
             faster_or_equal = b["duration_min"] <= a["duration_min"]

@@ -810,6 +810,137 @@ def test_intercity_options() -> None:
         origin="Bengaluru", dest="GOI", date="2025-12-15"))
     check("intercity: past date refused before any call", r5.get("kind") == "bad_input")
 
+def test_furthest_bookable() -> None:
+    """A date past the 60-day window has no fare, but the same route on the furthest
+    bookable date does - and that beats the silence that sends planners to a web
+    estimate. Matched on weekday, because train schedules vary by day."""
+    t = datetime.date(2026, 9, 5)
+    got = TR.furthest_bookable("2026-12-15", today=t)          # a Tuesday
+    check("furthest: returns a date inside the window", got == "2026-11-03", str(got))
+    check("furthest: matches the requested weekday",
+          datetime.date.fromisoformat(got).weekday()
+          == datetime.date(2026, 12, 15).weekday())
+    check("furthest: never past the boundary",
+          (datetime.date.fromisoformat(got) - t).days <= TR.ARP_DAYS)
+    check("furthest: and not in the past",
+          datetime.date.fromisoformat(got) >= t)
+    check("furthest: a bookable date needs no substitute",
+          TR.furthest_bookable("2026-10-01", today=t) is None)
+    check("furthest: the boundary itself needs none",
+          TR.furthest_bookable("2026-11-04", today=t) is None)
+
+
+def test_train_indicative_fare() -> None:
+    """not_in_window must stay the headline answer; the indicative fare rides along and
+    can never be mistaken for the requested date."""
+    import asyncio
+    from unittest.mock import patch
+
+    from mmt import tools as T
+
+    fake_trains = {"train_count": 1, "trains": [
+        {"train_number": "12779", "train_name": "GOA EXPRESS", "duration_min": 800,
+         "departure": "15:15", "arrival": "04:35",
+         "classes": [{"class": "3A", "fare_inr": 1250, "status": "AVAILABLE"}]}]}
+
+    async def fake_search(src, dst, iso_date, **kw):
+        return dict(fake_trains, date=iso_date)
+
+    with patch.object(T.TR, "search", fake_search):
+        r = asyncio.run(T.TOOLS["mmt_train_search"]["fn"](
+            origin="SBC", dest="MAO", date="2026-12-15"))
+
+    check("indicative: still reports not_in_window", r.get("kind") == "not_in_window")
+    check("indicative: still says when booking opens",
+          r.get("booking_opens") == "2026-10-16", str(r.get("booking_opens")))
+    ind = r.get("indicative") or {}
+    check("indicative: a fare block is attached", bool(ind.get("trains")), str(ind)[:80])
+    check("indicative: it names the date it is FOR",
+          ind.get("quoted_for") and ind["quoted_for"] != "2026-12-15",
+          str(ind.get("quoted_for")))
+    check("indicative: it repeats the requested date so the two cannot be confused",
+          ind.get("requested_date") == "2026-12-15")
+    check("indicative: and says outright it is not that fare",
+          "NOT the fare for 2026-12-15" in ind.get("note", ""))
+
+    # opt out
+    with patch.object(T.TR, "search", fake_search):
+        r2 = asyncio.run(T.TOOLS["mmt_train_search"]["fn"](
+            origin="SBC", dest="MAO", date="2026-12-15", indicative=False))
+    check("indicative: can be switched off", "indicative" not in r2)
+
+    # a failing extra lookup must not replace the real answer
+    async def boom(*a, **k):
+        raise RuntimeError("network gone")
+
+    with patch.object(T.TR, "search", boom):
+        r3 = asyncio.run(T.TOOLS["mmt_train_search"]["fn"](
+            origin="SBC", dest="MAO", date="2026-12-15"))
+    check("indicative: a failed lookup leaves not_in_window intact",
+          r3.get("kind") == "not_in_window")
+    check("indicative: and records why it has no fare",
+          (r3.get("indicative") or {}).get("kind") == "unexpected")
+
+
+def test_intercity_indicative_train() -> None:
+    """An indicative train belongs in the comparison, flagged - but it must never make a
+    bookable option look beaten, because it is a price for a different day."""
+    import asyncio
+    from unittest.mock import patch
+
+    from mmt import compare as CMP
+    from mmt import tools as T
+
+    train_out = {
+        "error": "outside the window", "kind": "not_in_window",
+        "booking_opens": "2026-10-16",
+        "indicative": {"quoted_for": "2026-11-03", "requested_date": "2026-12-15",
+                       "trains": [{"train_number": "12779", "train_name": "GOA EXP",
+                                   "duration_min": 800, "departure": "15:15",
+                                   "arrival": "04:35",
+                                   "classes": [{"class": "3A", "fare_inr": 1250}]}]}}
+    flight_ok = {"itineraries": [
+        {"all_in_inr": 4367.0, "airline": "IndiGo", "flight_no": "6E 6554",
+         "duration": "01h 20m", "stops": 0, "to": "GOI"}]}
+
+    async def fake(name, **kw):
+        return {"mmt_flight_search": flight_ok, "mmt_train_search": train_out,
+                "mmt_cab_quote": {"cabs": [], "distance_km": 603}}[name]
+
+    loose = lambda n: ({}, n.strip().lower())
+    with patch.object(T, "_sub", fake), patch.object(T.CB, "resolve_place_loose", loose):
+        r = asyncio.run(T.TOOLS["mmt_intercity_options"]["fn"](
+            origin="Bengaluru", dest="GOI", date="2026-12-15", adults=2))
+
+    train = next((o for o in r["options"] if o["mode"] == "train"), None)
+    check("intercity: the indicative train appears as an option", train is not None)
+    check("intercity: flagged indicative", train and train.get("indicative") is True)
+    check("intercity: carrying the date it was quoted for",
+          train and train.get("quoted_for_date") == "2026-11-03")
+    check("intercity: and warning it is not bookable yet",
+          train and any("not bookable" in x for x in train["excludes"]))
+    check("intercity: party total still per passenger x2",
+          train and train["party_total_inr"] == 2500)
+    check("intercity: not_in_window is still reported alongside",
+          any(u["mode"] == "train" and u["kind"] == "not_in_window"
+              for u in r["unavailable"]))
+
+    flight = next(o for o in r["options"] if o["mode"] == "flight")
+    check("intercity: a cheaper indicative train does NOT dominate a bookable flight",
+          flight["dominated"] is False)
+
+    # the rule itself, directly
+    opts = [{"party_total_inr": 2500, "duration_min": 800, "indicative": True},
+            {"party_total_inr": 8734, "duration_min": 80}]
+    CMP.mark_dominated(opts)
+    check("compare: an indicative option never dominates", opts[1]["dominated"] is False)
+    check("compare: but it can itself be dominated",
+          CMP.mark_dominated([{"party_total_inr": 9000, "duration_min": 900,
+                               "indicative": True},
+                              {"party_total_inr": 100, "duration_min": 10}])[0]
+          ["dominated"] is True)
+
+
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
@@ -821,6 +952,8 @@ def main() -> int:
                test_cache_byte_budget, test_oversize_body_through_fetch,
                test_call_log, test_past_date_guard, test_place_match_quality,
                test_compare_normalisation, test_cab_place_candidates,
+               test_furthest_bookable, test_train_indicative_fare,
+               test_intercity_indicative_train,
                test_intercity_options):
         try:
             fn()

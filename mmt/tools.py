@@ -283,9 +283,12 @@ async def mmt_flight_search(origin: str, dest: str, date: str, adults: int = 2,
     "origin": {**S_STR, "description": "Station code (MDU) or known city name."},
     "dest": S_STR, "date": {**S_STR, "description": "ISO YYYY-MM-DD."},
     "travel_class": {**S_STR, "description": "Blank for all classes, else 3A/2A/SL."},
+    "indicative": {**S_BOOL, "description":
+                   "When the date is past the booking window, also quote the furthest "
+                   "date Indian Railways will price today. Default true."},
 }, ["origin", "dest", "date"]))
 async def mmt_train_search(origin: str, dest: str, date: str, travel_class: str = "",
-                           fresh: bool = False) -> dict:
+                           indicative: bool = True, fresh: bool = False) -> dict:
     """Trains on a route for one date, with live class-by-class availability and fare.
 
     Returns each train with departure, arrival, duration, days it runs, and per class:
@@ -295,14 +298,49 @@ async def mmt_train_search(origin: str, dest: str, date: str, travel_class: str 
     Indian Railways opens reservations 60 days ahead. Outside that window MakeMyTrip
     returns an empty page with HTTP 200, so this reports when booking opens instead of
     implying the route has no trains.
+
+    It also quotes the furthest date Indian Railways WILL price today, on the same
+    weekday, and returns it as `indicative`. That is a real fare for a different date,
+    never the fare for the one you asked about - the block carries `quoted_for`,
+    `days_out` and the requested date so the two cannot be confused. Without it the
+    honest answer to a date 100 days out is silence, and silence is what makes a planner
+    reach for a web estimate. Pass `indicative: false` to skip the extra lookup.
     """
     src, dst = TR.resolve_station(origin), TR.resolve_station(dest)
     if not TR.in_window(date):
+        details = {"booking_opens": TR.booking_opens(date), "route": f"{src}-{dst}"}
+        quote_for = TR.furthest_bookable(date) if indicative else None
+        if quote_for:
+            # One extra tier-1 fetch, a couple of seconds. Failure here must not replace
+            # the not_in_window answer, which is the thing the caller actually asked.
+            block = {"quoted_for": quote_for, "requested_date": date,
+                     "days_out": TR.ARP_DAYS,
+                     "same_weekday": True,
+                     "note": "Fares below are for quoted_for, the furthest date Indian "
+                             "Railways prices today, chosen on the same weekday as the "
+                             "requested date so the same services run. They are an "
+                             "indication of what this route costs, NOT the fare for "
+                             f"{date}, which cannot exist until "
+                             f"{TR.booking_opens(date)}."}
+            try:
+                got = await TR.search(src, dst, quote_for, class_code=travel_class,
+                                      fresh=fresh)
+                block["train_count"] = got.get("train_count")
+                block["trains"] = got.get("trains")
+            except MMTError as e:
+                block["error"] = e.message
+                block["kind"] = e.kind
+            except Exception as e:                       # never mask the real answer
+                block["error"] = f"{type(e).__name__}: {e}"
+                block["kind"] = "unexpected"
+            details["indicative"] = block
         raise NotInWindow(
             f"{date} is outside Indian Railways' {TR.ARP_DAYS}-day reservation window, "
             "so MakeMyTrip has nothing to show yet.",
-            hint=f"Booking for this date opens on {TR.booking_opens(date)}.",
-            details={"booking_opens": TR.booking_opens(date), "route": f"{src}-{dst}"})
+            hint=f"Booking for this date opens on {TR.booking_opens(date)}."
+                 + (f" Indicative fares for {quote_for}, the furthest date currently "
+                    f"priced, are included." if quote_for else ""),
+            details=details)
     out = await TR.search(src, dst, date, class_code=travel_class, fresh=fresh)
     if not out["train_count"]:
         out["warning"] = ("No trains returned even though the date is inside the "
@@ -441,6 +479,31 @@ async def mmt_intercity_options(origin: str, dest: str, date: str, adults: int =
             if r.get("error"):
                 extra = {k: r[k] for k in ("booking_opens", "hint") if k in r}
                 note("train", r.get("kind") or "error", r["error"], **extra)
+                # A fare for the furthest bookable date is still worth comparing, as
+                # long as it can never be mistaken for a fare on the requested one.
+                ind = r.get("indicative") or {}
+                for tr in (ind.get("trains") or [])[:MAX_PER_MODE]:
+                    cheap = next((c for c in tr.get("classes", [])
+                                  if isinstance(c.get("fare_inr"), (int, float))
+                                  and c["fare_inr"] > 0), None)
+                    if not cheap:
+                        continue
+                    options.append({
+                        "mode": "train",
+                        "label": f"{tr.get('train_number')} {tr.get('train_name')} "
+                                 f"({cheap.get('class')})",
+                        "per_unit_inr": cheap.get("fare_inr"),
+                        "unit": "per passenger",
+                        "party_total_inr": CMP.party_total(cheap.get("fare_inr"),
+                                                           "per passenger", adults),
+                        "duration_min": CMP.duration_minutes(tr.get("duration_min")),
+                        "depart": tr.get("departure"), "arrive": tr.get("arrival"),
+                        "indicative": True,
+                        "quoted_for_date": ind.get("quoted_for"),
+                        "excludes": ["station transfers at both ends",
+                                     f"not bookable until {r.get('booking_opens')}"],
+                        "source_tool": "mmt_train_search",
+                    })
             else:
                 priced = []
                 for tr in r.get("trains", []):
@@ -671,7 +734,12 @@ async def mmt_capabilities() -> dict:
                     "date picker",
             "flights": "none",
             "trains": f"Indian Railways opens reservations {TR.ARP_DAYS} days ahead; "
-                      "outside that MakeMyTrip returns an empty page with HTTP 200",
+                      "outside that MakeMyTrip returns an empty page with HTTP 200. "
+                      "mmt_train_search then ALSO quotes the furthest date currently "
+                      "priced, on the same weekday, under `indicative` - a real fare "
+                      "for a different date, never the requested one. Use it to compare "
+                      "rail against road and air; do not present it as the fare for the "
+                      "day asked about",
         },
         "pricing_conventions": {
             "currency": "INR",

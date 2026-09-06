@@ -21,7 +21,7 @@ Runs anywhere that speaks MCP over stdio: **Claude Cowork** (as a plugin), **Ope
 | `mmt_hotel_rates` | One property → every room type and rate plan, with meal plan and cancellation |
 | `mmt_price_itinerary` | A multi-stop trip → per-leg table **and a total summed server-side** |
 | `mmt_flight_search` | Route + date → fares per adult, base/tax apart *(slow — see note below)* |
-| `mmt_train_search` | Route + date → trains with live per-class waitlist status, fare, confirmation odds |
+| `mmt_train_search` | Route + date → trains with live per-class waitlist status, fare, confirmation odds; outside the 60-day window it also quotes the furthest bookable date as an **indicative** fare |
 | `mmt_station_city` | Station codes → city codes, tying a rail leg to its hotel |
 | `mmt_cab_quote` | Two places + date → every vehicle class, base/tax/all-in **and per-km**; optional `return_date` for round trips |
 | `mmt_intercity_options` | One leg by **flight, train and cab at once**, normalised to a party total with the source unit kept visible; marks options that are dearer *and* slower as `dominated` and leaves the choice to you |

@@ -21,6 +21,15 @@ per-date breakdown. The fields are `nightly_base_inr`, `nightly_tax_inr`, `night
 `nightly_` prefix is load-bearing. Anything that says "stay totals" or
 `all_in_per_night_inr` predates 2026-09-05 and is wrong.
 
+A train date past the 60-day reservation window has no fare, and `mmt_train_search` says so
+with `booking_opens`. It now also returns an `indicative` block: the same route on the
+furthest date Indian Railways prices today, picked on the same weekday so the same services
+run. Use it to compare rail against road and air - a Bengaluru-Goa sleeper at a few hundred
+rupees a head changes the shape of a budget - but never present it as the fare for the
+requested date. The block carries `quoted_for` and `requested_date` precisely so the two
+cannot be confused, and in `mmt_intercity_options` such rows are flagged `indicative` and are
+never allowed to make a bookable option look beaten.
+
 For an intercity leg use `mmt_intercity_options` rather than calling the flight, train and
 cab tools separately and comparing by hand. Flights and trains are quoted per person and a
 cab per vehicle; mixing those units is the single most common way a trip total goes wrong,

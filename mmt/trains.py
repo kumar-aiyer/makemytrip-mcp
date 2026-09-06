@@ -49,6 +49,34 @@ def booking_opens(iso_date: str) -> str:
     return (d - timedelta(days=ARP_DAYS)).isoformat()
 
 
+def furthest_bookable(iso_date: str, today: date | None = None) -> str | None:
+    """The latest date Indian Railways will quote right now, for the same weekday.
+
+    A date past the 60-day reservation window has no fare, and until now the honest
+    answer stopped there - so subjects substituted a web estimate for the rail leg or
+    dropped it. There IS a real number available: the same route on the furthest date
+    that is currently open. It is not the fare for the requested date and must never be
+    presented as one, but it is MakeMyTrip data rather than a guess.
+
+    Stepped back to match the requested date's weekday, because train schedules vary by
+    day - a Tuesday service may not run on the boundary Friday, and comparing a fare
+    against a train that does not run on your day would be worse than no fare at all.
+
+    Returns None when the requested date is already bookable.
+    """
+    t = today or date.today()
+    try:
+        d = date.fromisoformat(iso_date)
+    except ValueError:
+        raise BadInput("date must be ISO YYYY-MM-DD") from None
+    boundary = t + timedelta(days=ARP_DAYS)
+    if d <= boundary:
+        return None
+    step_back = (boundary.weekday() - d.weekday()) % 7
+    candidate = boundary - timedelta(days=step_back)
+    return (candidate if candidate >= t else boundary).isoformat()
+
+
 def in_window(iso_date: str, today: date | None = None) -> bool:
     try:
         d = date.fromisoformat(iso_date)

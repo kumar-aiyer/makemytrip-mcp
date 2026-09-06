@@ -913,3 +913,60 @@ built to prevent. `calls_made` in the response makes the budget cost explicit to
 
 **This is a new tool, so hosts need one reconnect to see it** — `tools/list` is snapshotted
 at connect.
+
+---
+
+## Run 2026-09-05 — trains answer with a real fare instead of silence
+
+Offline **235/235** (24 new assertions). Verified live.
+
+`mmt_train_search` on a date past the 60-day reservation window still reports
+`not_in_window` with `booking_opens` — that stays the headline, because it is the answer to
+the question asked. It now *also* runs one extra tier-1 lookup for the furthest date Indian
+Railways prices today and returns it as `indicative`.
+
+Live, for SBC → MAO on 2026-12-15 (booking opens 2026-10-16):
+
+```
+quoted_for 2026-11-03   requested 2026-12-15   7 trains
+  20694 Jodhpur Exp       00:03->08:28   8h 25m   SL Rs 375
+  20676 Vishwamanav Exp   10:00->19:18   9h 18m   2S Rs 225
+  17309 Ypr Vsg Exp       15:30->03:25  11h 55m   SL Rs 395
+```
+
+Previously the honest answer to that query was nothing at all, and nothing is exactly what
+sent four subjects to a web estimate or to dropping the rail leg. This is MakeMyTrip data.
+
+### The design is all about not being mistaken for the real fare
+
+- **The weekday is matched.** 15 Dec is a Tuesday, so it quotes Tuesday 3 Nov rather than
+  the raw boundary. Train schedules vary by day; a fare for a service that does not run on
+  your day would be worse than no fare.
+- **The block names both dates** — `quoted_for`, `requested_date` — and the note says in
+  words that it is *"NOT the fare for 2026-12-15, which cannot exist until 2026-10-16"*.
+- **`not_in_window` is unchanged**, so H2 and every existing caller behave as before, and a
+  failure in the extra lookup is recorded inside the block rather than replacing the real
+  answer. Tested by making the second search raise.
+- **`indicative: false`** skips it.
+
+### In `mmt_intercity_options`: comparable, flagged, and never dominating
+
+Indicative trains join the comparison flagged `indicative` with `quoted_for_date`, and their
+`excludes` says "not bookable until 2026-10-16". One rule makes them safe:
+
+**an indicative option can be dominated but never dominates.** A price for a different date
+cannot prove a bookable option is beaten. Without that rule a Rs 450 rail fare would mark a
+real flight `dominated` and quietly demote something the traveller can actually buy.
+
+Live, Bengaluru → goa, one call, 9 options:
+
+```
+train  20676 Vishwamanav Exp (2S)     450  per passenger  558 min   [2026-11-03]
+flight IndiGo 6E 6554 nonstop        8734  per adult       80 min
+cab    WagonR/Swift HATCHBACK       12161  per vehicle    690 min   dominated
+```
+
+That is the trade-off the whole tool exists to put in front of a reasoning model: rail at a
+twentieth of the airfare for nine hours instead of eighty minutes, on one call, with the
+booking-window caveat attached. **H2 is now not merely exercisable but hard to avoid** — a
+subject pricing this leg gets the train status whether or not it thought to ask.
