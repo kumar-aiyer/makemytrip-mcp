@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest something this should be able to price or report
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project is deliberately narrow: it reads Indian travel prices for one person
+        planning a trip on their own desktop. **Booking, payment, login and account
+        features are permanently out of scope** — see CONTRIBUTING.md.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What can't you do today
+      description: The planning problem, not the implementation you have in mind.
+    validations: { required: true }
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you think would solve it
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This needs no booking, cart, payment, login or account access
+          required: true
+        - label: This does not require polling, scheduling, or bulk/multi-user use
+          required: true

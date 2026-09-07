@@ -55,8 +55,11 @@ plainly rather than silently swallowed.
 6. **Prefer a clear error to an empty result.** Almost every failure on this site is a silent
    HTTP 200. Converting those into sentences a person can act on is the whole point of the
    server.
-7. **Undocumented endpoints.** MakeMyTrip's terms do not invite automated access. Do not
-   publish this to any registry or package index. Keep the note in the README.
+7. **Undocumented endpoints.** MakeMyTrip's terms do not invite automated access. The
+   project is MIT-licensed and public as of 2026-09-06, so the safeguard is no longer
+   "don't share it" - it is that the politeness rules in item 4 stay enforced in code and
+   are review criteria for every contribution. Keep the Licence and Unofficial notes in the
+   README accurate.
 
 ---
 

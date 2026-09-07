@@ -1,0 +1,10 @@
+# Every change needs the maintainer's review before it can merge.
+#
+# CODEOWNERS only *requests* that review. To make it binding, turn on branch
+# protection for `main` in Settings -> Branches:
+#   - Require a pull request before merging
+#   - Require review from Code Owners
+#   - Do not allow bypassing the above settings
+# Without those, this file is a suggestion.
+
+*       @kumar-aiyer
