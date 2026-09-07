@@ -7,4 +7,4 @@
 #
 # The current occurrence is marked inline with `# gitleaks:allow`; this entry covers
 # the same line in the commit that predates that marker.
-7556c58b308521dd7ccaaa8b5cd5eede43f307d2:tests/test_parsers.py:generic-api-key:190
+49a534c28ebcf01cd964d7d2e378a038b2a5da82:tests/test_parsers.py:generic-api-key:190
