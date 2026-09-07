@@ -25,6 +25,25 @@ _DAYS = [("Mon", "runningMon"), ("Tue", "runningTue"), ("Wed", "runningWed"),
          ("Sun", "runningSun")]
 
 
+def is_probable_station(name: str) -> bool:
+    """Whether a name is plausibly a station, without guessing.
+
+    `resolve_station` accepts any 2-5 letter word as a code, which was fine while a
+    caller typed one deliberately. Once every leg routes through
+    mmt_intercity_options that leniency turns into invented work: "colva" and "kulem"
+    are five letters, so a hotel-to-hotel transfer would fire a train search on a route
+    that does not exist. A known name, or something that actually looks like a code
+    (SBC, MAO, NDLS - short, alphabetic and upper case), counts. A lower-case word does
+    not, and that is the documented rule.
+    """
+    n = (name or "").strip()
+    if not n:
+        return False
+    if n.lower() in C.STATIONS:
+        return True
+    return n.isalpha() and n.isupper() and 2 <= len(n) <= 5
+
+
 def resolve_station(name: str) -> str:
     n = (name or "").strip()
     if not n:

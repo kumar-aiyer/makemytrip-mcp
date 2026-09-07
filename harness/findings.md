@@ -1375,3 +1375,72 @@ Seven runs in, the server-side defect list is short and the remaining gate failu
 **where guidance lives**, not whether the data is right. Outstanding: move the base/tax and
 rail-comparison guidance into the individual tools (H1, H2), token-subset place matching
 (BUG-17 residual), and the `distance_km` package-bucket label (BUG-21).
+
+---
+
+## Run 2026-09-06 — the single-mode searches are no longer exposed
+
+Offline **308/308** (23 new assertions), 19/19, 33/33. Verified over a real MCP connection.
+
+`mmt_flight_search`, `mmt_train_search` and `mmt_cab_quote` are hidden from `tools/list`.
+`mmt_intercity_options` is now the interface for pricing a journey between two places.
+**12 tools advertised, 15 registered.**
+
+### Why, from the runs rather than from taste
+
+Run 6 settled it. Its subject never called `mmt_intercity_options` — despite
+`mmt_capabilities` being its first call and listing that tool as preferred — and both of its
+gate failures followed from that one choice: no rail line anywhere (H2), and no base/tax
+split (H1), because the split instruction lived only in that tool's note. Five of six runs
+have no train line, and the one that passed is the one that used the comparison tool.
+
+A "prefer this tool" line does not redirect a subject that has already decided how to
+decompose the problem. Removing the alternative does.
+
+### Hidden, not deleted — and the distinction is load-bearing
+
+They stay registered and callable by name. `tools/probe.py`, `mmt_selftest` and
+`mmt_intercity_options` itself all reach them through `TOOLS`, and a caller who knows a name
+can still call it. Verified live: `mmt_train_search` called by name still answers
+`not_in_window`. What changed is that a model browsing the tool list is not offered a way to
+price one mode in isolation.
+
+### Two things the hide *required*, which are the interesting part
+
+**The station guard was a latent bug that this change would have promoted.**
+`resolve_station` accepts any 2-5 letter word as a station code — harmless while a caller
+typed one deliberately, wrong once every leg routes through one tool, because `colva` and
+`kulem` are five letters and a hotel-to-hotel transfer would have fired a train search on a
+route that does not exist. New `trains.is_probable_station()`: a known name, or something
+that actually looks like a code (short, alphabetic, upper case). A bare lower-case `sbc` now
+reads as a place name, which is the documented rule.
+
+**`pickup_time` was missing.** The hidden cab tool had it and the comparison tool did not, so
+hiding one without adding the other would have silently pinned every airport transfer to
+10:00. Run 6 used 14:00 for exactly this.
+
+Both are the shape of thing worth expecting whenever an interface narrows: **the survivor
+inherits every capability the hidden tools carried, and every assumption their callers were
+making.**
+
+### What it costs, measured rather than assumed
+
+The worry with one door is that a local transfer pays for a flight and train search it does
+not need. Live, `goa → panaji`:
+
+```
+31 s   calls_made={'mmt_cab_quote': 1}   3 options
+  · flight | unknown airport 'panaji'
+  · train  | 'panaji' is not a station name or code, so no train search was spent
+```
+
+One cab quote, the same cost as the hidden tool, with the skips explained. The mode guards
+were already doing this work; the hide just made them load-bearing.
+
+### H1 is still not fixed by this
+
+Hiding intercity tools does nothing for hotels, which were **32 of run 6's 53 calls** and 45%
+of its budget, and whose rows also lacked the split. The base/tax instruction is now in
+`mmt_hotel_search` and `mmt_hotel_rates` as well, where a subject working through the hotel
+tools will actually meet it. Whether that is enough is a question for run 7, and it is the
+same lesson a third time: **guidance has to live where the caller is looking.**

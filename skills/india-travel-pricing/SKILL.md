@@ -27,10 +27,9 @@ route**, and a **Vande Bharat is given a slot even when it costs more** than the
 beside it. The reasoning is that a nine-hour unreserved 2S seat is not a comparable to a
 flight, and a fare you would never actually book makes rail look cheaper than it is. What
 survives is marked `vande_bharat` and carries `avg_kmph` computed from the timetable rather
-than guessed from the name. `mmt_train_search` still returns the whole listing by default -
-pass `ac_only` / `fast_only` there if you want the same view.
+than guessed from the name. `mmt_train_search` still returns the whole listing when called internally.
 
-A train date past the 60-day reservation window has no fare, and `mmt_train_search` says so
+A train date past the 60-day reservation window has no fare, and the train leg says so
 with `booking_opens`. It now also returns an `indicative` block: the same route on the
 furthest date Indian Railways prices today, picked on the same weekday so the same services
 run. Use it to compare rail against road and air - a Bengaluru-Goa sleeper at a few hundred
@@ -39,8 +38,11 @@ requested date. The block carries `quoted_for` and `requested_date` precisely so
 cannot be confused, and in `mmt_intercity_options` such rows are flagged `indicative` and are
 never allowed to make a bookable option look beaten.
 
-For an intercity leg use `mmt_intercity_options` rather than calling the flight, train and
-cab tools separately and comparing by hand. Flights and trains are quoted per person and a
+Price every journey between two places with `mmt_intercity_options` — it is the only such
+tool exposed. The single-mode searches still exist and it calls them, but they are no longer
+listed, because five of six acceptance runs that priced legs mode-by-mode left rail out of
+the itinerary entirely and mixed per-adult fares with per-vehicle ones. Modes that cannot
+apply are skipped, so a local transfer costs one cab quote and nothing more. Flights and trains are quoted per person and a
 cab per vehicle; mixing those units is the single most common way a trip total goes wrong,
 and the tool does that arithmetic once, keeping `unit` visible on every row. It marks an
 option `dominated` when another is both cheaper and faster - beyond that it does not

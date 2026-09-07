@@ -34,7 +34,14 @@ S_INT = {"type": "integer"}
 S_BOOL = {"type": "boolean"}
 
 
-def tool(name: str, schema: dict[str, Any]) -> Callable:
+def tool(name: str, schema: dict[str, Any], *, hidden: bool = False) -> Callable:
+    """Register a tool. `hidden` keeps it out of tools/list.
+
+    A hidden tool is still registered and still callable - probe.py, mmt_selftest and
+    mmt_intercity_options all reach it through TOOLS - it is simply not advertised to a
+    model. That distinction is the point: the single-mode searches are parts a caller
+    kept using badly, not parts that stopped working.
+    """
     def deco(fn: Callable) -> Callable:
         @functools.wraps(fn)
         async def wrapper(**kwargs):
@@ -54,7 +61,7 @@ def tool(name: str, schema: dict[str, Any]) -> Callable:
             CALLLOG.record(name, kwargs, result,
                            int((time.perf_counter() - t0) * 1000))
             return result
-        TOOLS[name] = {"fn": wrapper, "schema": schema,
+        TOOLS[name] = {"fn": wrapper, "schema": schema, "hidden": hidden,
                        "description": inspect.getdoc(fn) or ""}
         return wrapper
     return deco
@@ -86,7 +93,10 @@ async def mmt_hotel_search(city: str, check_in: str, check_out: str, adults: int
 
     Prices are INR **PER NIGHT** - `nightly_base_inr`, `nightly_tax_inr`,
     `nightly_all_in_inr` - reported apart because MakeMyTrip displays them apart and
-    the all-in figure is roughly 18% above the headline.
+    the all-in figure is roughly 18% above the headline. **Report base and tax
+    separately rather than only the all-in figure**: a blended number is how budgets
+    end up understated, and acceptance runs collapse this split more often than they
+    keep it.
 
     `stay_estimate_all_in_inr` is `nightly_all_in_inr x nights`. It is an ESTIMATE:
     MakeMyTrip quotes one representative nightly rate for the range rather than a
@@ -161,7 +171,7 @@ async def mmt_hotel_rates(hotel_id: str, city: str, check_in: str, check_out: st
 
     Plan prices are PER NIGHT (`nightly_*`). `cheapest_stay_estimate_inr` multiplies the
     cheapest plan by `nights` and is an estimate, for the reason given on
-    mmt_hotel_search.
+    mmt_hotel_search. **Report base and tax separately**, not just the all-in figure.
 
     Includes meal plan, cancellation policy and inclusions. Flags properties where every
     plan includes breakfast, so a room-only rate that does not exist is never reported.
@@ -253,7 +263,7 @@ async def mmt_price_itinerary(stays: list[dict], fresh: bool = False) -> dict:
     "dest": S_STR, "date": {**S_STR, "description": "ISO YYYY-MM-DD."},
     "adults": S_INT, "children": S_INT, "infants": S_INT,
     "cabin": {**S_STR, "description": "E economy, W premium economy, B business."},
-}, ["origin", "dest", "date"]))
+}, ["origin", "dest", "date"]), hidden=True)
 async def mmt_flight_search(origin: str, dest: str, date: str, adults: int = 2,
                             children: int = 0, infants: int = 0, cabin: str = "E",
                             fresh: bool = False) -> dict:
@@ -292,7 +302,7 @@ async def mmt_flight_search(origin: str, dest: str, date: str, adults: int = 2,
     "fast_only": {**S_BOOL, "description":
                   "Keep only trains within 1.25x the quickest on the route. "
                   "Default false."},
-}, ["origin", "dest", "date"]))
+}, ["origin", "dest", "date"]), hidden=True)
 async def mmt_train_search(origin: str, dest: str, date: str, travel_class: str = "",
                            indicative: bool = True, ac_only: bool = False,
                            fast_only: bool = False, fresh: bool = False) -> dict:
@@ -438,11 +448,21 @@ async def _sub(name: str, **kwargs) -> dict:
     "modes": {"type": "array", "items": {"type": "string"},
               "description": "Subset of flight/train/cab. Omit for all three."},
     "cabin": {**S_STR, "description": "Flights only: E, W or B."},
+    "pickup_time": {**S_STR, "description":
+                    "Cabs only: 24h HH:MM, default 10:00. Matters for an airport "
+                    "transfer timed to a flight."},
 }, ["origin", "dest", "date"]))
 async def mmt_intercity_options(origin: str, dest: str, date: str, adults: int = 2,
                                 modes: list | None = None, cabin: str = "E",
+                                pickup_time: str = "10:00",
                                 fresh: bool = False) -> dict:
     """Price one intercity leg by flight, train and cab at once, on comparable terms.
+
+    **This is the interface for pricing a journey between two places** - the
+    single-mode searches behind it are no longer exposed. Five of six acceptance runs
+    that priced legs mode-by-mode omitted rail entirely, and mixing a per-adult airfare
+    with a per-vehicle cab fare by hand is where trip totals go wrong. Modes that cannot
+    apply are skipped, so a local transfer costs one cab quote and nothing else.
 
     Every option carries `party_total_inr` for the whole party alongside `per_unit_inr`
     and the `unit` it came in - flights and trains are per person, a cab is per vehicle,
@@ -523,6 +543,11 @@ async def mmt_intercity_options(origin: str, dest: str, date: str, adults: int =
 
     if "train" in wanted:
         try:
+            for end in (origin, dest):
+                if not TR.is_probable_station(end):
+                    raise BadInput(
+                        f"{end!r} is not a station name or code, so no train search "
+                        f"was spent on this leg.")
             TR.resolve_station(origin), TR.resolve_station(dest)
         except MMTError as e:
             note("train", "not_applicable", e.message)
@@ -590,7 +615,7 @@ async def mmt_intercity_options(origin: str, dest: str, date: str, adults: int =
         else:
             calls["mmt_cab_quote"] = 1
             r = await _sub("mmt_cab_quote", origin=cab_o, dest=cab_d, date=date,
-                           fresh=fresh)
+                           pickup_time=pickup_time, fresh=fresh)
             if cab_o != origin.strip().lower() or cab_d != dest.strip().lower():
                 note("cab", "resolved_names",
                      f"cab leg priced as {cab_o!r} -> {cab_d!r}; the names given resolve "
@@ -646,7 +671,7 @@ async def mmt_intercity_options(origin: str, dest: str, date: str, adults: int =
     "pickup_time": {**S_STR, "description": "24h HH:MM, default 10:00."},
     "trip_type": {**S_STR, "description": "OW one-way or RT round trip."},
     "return_date": {**S_STR, "description": "ISO YYYY-MM-DD, required when trip_type is RT."},
-}, ["origin", "dest", "date"]))
+}, ["origin", "dest", "date"]), hidden=True)
 async def mmt_cab_quote(origin: str, dest: str, date: str, pickup_time: str = "10:00",
                         trip_type: str = "OW", return_date: str = "",
                         fresh: bool = False) -> dict:
@@ -748,9 +773,12 @@ async def mmt_capabilities() -> dict:
             "hotel_search": "city plus dates to a priced list",
             "hotel_rates": "one property to every room and rate plan",
             "price_itinerary": "multi-stop total, summed server-side",
-            "train_search": "trains with live per-class availability",
-            "cab_quote": "outstation cabs by vehicle class",
-            "intercity_options": "one leg priced by flight, train and cab together, "
+            "intercity_options": "THE way to price a journey between two places. "
+                                 "The single-mode searches still run - this calls them "
+                                 "- but they are no longer listed, because pricing a "
+                                 "leg one mode at a time is how rail gets forgotten "
+                                 "and how per-adult fares get added to per-vehicle "
+                                 "ones. One leg priced by flight, train and cab, "
                                  "normalised to a party total with the source unit kept "
                                  "visible. PREFER THIS for an intercity leg: comparing "
                                  "per-adult fares against a per-vehicle cab by hand is "
@@ -758,9 +786,6 @@ async def mmt_capabilities() -> dict:
                                  "recommend - it marks options that are both dearer and "
                                  "slower as dominated and leaves the choice to you",
             "station_city": "station code to city code",
-            "flight_search": "fares per adult, base and tax apart, cheapest first - "
-                             "but SLOW (~30-60 s) and it answers with nearby airports "
-                             "as well as the one asked for",
         },
         "experimental": {
             "cab_find_place": "drives the search form; falls back to a pasted URL",

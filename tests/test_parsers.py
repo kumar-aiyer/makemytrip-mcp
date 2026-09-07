@@ -1245,6 +1245,93 @@ def test_harvest_blocks_instead_of_grinding() -> None:
           page3.polls < 12, str(page3.polls))
 
 
+def test_single_mode_tools_are_hidden() -> None:
+    """The single-mode searches are no longer advertised: five of six acceptance runs
+    that priced legs mode-by-mode omitted rail, and run 6 also missed the base/tax
+    guidance that lived only in the comparison tool. They stay registered and callable -
+    probe.py, mmt_selftest and mmt_intercity_options all reach them - just not offered
+    to a model."""
+    import server
+
+    from mmt import tools as T
+
+    hidden = {"mmt_flight_search", "mmt_train_search", "mmt_cab_quote"}
+    advertised = {t["name"] for t in server.tool_list()["tools"]}
+
+    check("hide: the single-mode searches are not advertised",
+          not (hidden & advertised), str(hidden & advertised))
+    check("hide: but they are still registered", hidden <= set(T.TOOLS))
+    check("hide: and still callable by name",
+          all(callable(T.TOOLS[n]["fn"]) for n in hidden))
+    check("hide: the comparison tool IS advertised",
+          "mmt_intercity_options" in advertised)
+    check("hide: place registration stays advertised - it is how cabs become usable",
+          {"mmt_cab_find_place", "mmt_cab_add_place"} <= advertised)
+    check("hide: hotels stay advertised", "mmt_hotel_search" in advertised)
+    check("hide: nothing else was hidden by accident",
+          {n for n, s in T.TOOLS.items() if s.get("hidden")} == hidden,
+          str({n for n, s in T.TOOLS.items() if s.get("hidden")}))
+    check("hide: every advertised tool still carries a description and schema",
+          all(t["description"] and t["inputSchema"]
+              for t in server.tool_list()["tools"]))
+
+
+def test_probable_station() -> None:
+    """resolve_station accepts any 2-5 letter word as a code. Harmless while a caller
+    typed one on purpose; wrong now that every leg routes through one tool, because
+    "colva" and "kulem" are five letters and would fire a train search on a hotel
+    transfer."""
+    for yes in ("Bengaluru", "Goa", "SBC", "MAO", "NDLS"):
+        check(f"station: {yes} counts", TR.is_probable_station(yes))
+    for no in ("colva", "kulem", "calangute", "agonda", "", "sbc"):
+        check(f"station: {no!r} does not", not TR.is_probable_station(no))
+
+
+def test_intercity_skips_trains_for_places() -> None:
+    """A local transfer must not spend a train search, and must say why."""
+    import asyncio
+    from unittest.mock import patch
+
+    from mmt import tools as T
+
+    called = []
+
+    async def fake(name, **kw):
+        called.append(name)
+        if name == "mmt_cab_quote":
+            return {"distance_km": 40, "approx_hours": 1.0, "cabs": [
+                {"all_in_inr": 2045, "base_inr": 1900, "tax_fees_inr": 145,
+                 "car": "WagonR", "category": "HATCHBACK", "vendor": "X"}]}
+        raise AssertionError(f"{name} should not run for a local transfer")
+
+    loose = lambda n: ({}, n.strip().lower())
+    with patch.object(T, "_sub", fake), patch.object(T.CB, "resolve_place_loose", loose):
+        r = asyncio.run(T.TOOLS["mmt_intercity_options"]["fn"](
+            origin="colva", dest="agonda", date="2026-12-20", adults=2,
+            pickup_time="14:00"))
+
+    check("intercity: a local transfer spends only a cab quote",
+          called == ["mmt_cab_quote"], str(called))
+    check("intercity: and it says the ends are not stations",
+          any(u["mode"] == "train" and "not a station" in u["reason"]
+              for u in r["unavailable"]), str(r["unavailable"]))
+    check("intercity: the cab option is still priced",
+          r["options"] and r["options"][0]["party_total_inr"] == 2045)
+
+    # pickup_time must reach the cab leg - the hidden tool had it and this did not
+    seen = {}
+
+    async def fake2(name, **kw):
+        seen.update(kw)
+        return {"cabs": []}
+
+    with patch.object(T, "_sub", fake2), patch.object(T.CB, "resolve_place_loose", loose):
+        asyncio.run(T.TOOLS["mmt_intercity_options"]["fn"](
+            origin="colva", dest="agonda", date="2026-12-20", pickup_time="14:00"))
+    check("intercity: pickup_time reaches the cab quote",
+          seen.get("pickup_time") == "14:00", str(seen))
+
+
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
@@ -1262,6 +1349,8 @@ def main() -> int:
                test_intercity_excludes_alternate_departures,
                test_match_quality_no_false_warning,
                test_stream_verdict, test_harvest_blocks_instead_of_grinding,
+               test_single_mode_tools_are_hidden, test_probable_station,
+               test_intercity_skips_trains_for_places,
                test_intercity_indicative_train,
                test_intercity_options):
         try:
