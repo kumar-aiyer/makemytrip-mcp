@@ -262,3 +262,1406 @@ new tooling around the server, not a change to `mmt/` server behaviour; no serve
 Carried forward for Phase 2: the pre-flight should call `mmt_version` first and compare
 `loaded_at_commit` against `git rev-parse HEAD` before trusting any live result - the stale
 build that motivated this is exactly the silent failure the acceptance run must not measure.
+
+---
+
+## Run 2026-09-05 - Phase 2 acceptance: attempted from Claude Code, **blocked before Step 2**
+
+> **Superseded the same morning** - the host problem was solved rather than deferred. See the
+> next section. The structural point below still stands and is why the driver exists.
+
+The acceptance run did not execute. Full evidence in `harness/runs/2026-09-05/run-log.md`;
+the finding worth carrying forward is short.
+
+**The MMT server is single-host by construction, and the host is whoever launched it.**
+It speaks MCP over stdio, so the pipes belong to the process that spawned `watch_server.py`
+- during this attempt, the VS Code extension host running Cline (watcher PID 160536, child
+`server.py` PID 60468, up since 07:09 PDT). A Claude Code session in the same repo, on the
+same machine, at the same moment, has no way to reach it: not registered in `~/.claude.json`
+(top-level and project `mcpServers` both `{}`), no `.mcp.json`, and nothing in the deferred
+tool list. This is not a misconfiguration to fix in-session. Two prior findings say why
+fixing it in-session is the wrong instinct:
+
+- the host snapshots `tools/list` at connect and never re-fetches, so a registration added
+  mid-session cannot surface (dev-infra run, "interface caveat"); and
+- a second `server.py` would race the first for the same Chrome profile, which is the
+  locked-profile hazard from Phase 1 finding #3 - a launch against a locked profile hands
+  its startup URL to the running instance and exits 0, reading as "Chrome died".
+
+**Consequence for the harness:** an acceptance-run prompt has to name the host it must be
+run from, the same way the pre-flight names the commit it must be run against. `mmt_version`
+protects against talking to a *stale* server; nothing protected against having *no* server,
+because the failure mode is a missing tool rather than a wrong answer. A pre-flight step
+that fails loudly when `mmt_version` is not callable at all would have caught this in one
+call instead of a full session of inference.
+
+Nothing was consumed: `.state/data.json` is byte-identical to `state-before.json` (no
+`kulem`), `failures.jsonl` is unchanged at 34 rows, and the 2-call flight-search budget is
+unspent. The only artifact produced is `harness/runs/2026-09-05/make_pdf.py` (Step 5's
+generator, data-driven and smoke-tested, refuses to print a cost row without a `source`).
+It is deliberately deferred, not weakened: fpdf2 stays a harness-only tool and is not added
+to `requirements.txt`, which remains Playwright-only by design.
+
+---
+
+## Run 2026-09-05 - Phase 2 acceptance run: **PASS**, three new defects
+
+Driven from Claude Code through `harness/mcp_client.py` (one spawned `server.py`, one
+handshake, one Chrome, real `tools/call` for every number). Pre-flight `mmt_version` matched
+HEAD `a59e389` exactly. 14 tool calls, flight budget 2/2. Full trace and H-ARITH working in
+`harness/runs/2026-09-05/run-log.md`; the deliverable is `goa-itinerary.pdf`, ₹57,674 for two
+(₹28,837/person), of which ₹38,154 is MCP-sourced and the rest labelled web/estimate.
+
+### The two hang fixes hold
+
+`mmt_cab_quote` bengaluru→goa - the call that hung the previous attempt - returned in
+**31.1 s** with 10 cabs. `wait_for="domcontentloaded"` is the right call: MMT's ad pixels
+genuinely never stop, so `networkidle` was never going to fire. The flight harvester without
+`await resp.finished()` returned 25 itineraries on both legs in 29.0 s and 11.1 s. Neither
+fix has a downside visible at this sample size.
+
+### BUG-13 (new): the page cache cap is smaller than a hotel detail page
+
+`mmt_hotel_rates` on Hyatt Centric Candolim now fails outright:
+
+```
+HTTP 200 body of 2,599,533 bytes exceeds the 2,097,152-byte page cache cap.
+kind: shape_drift   attempts: ['tier1:shape_drift', 'tier2:shape_drift']
+```
+
+The page is 2.6 MB and the cap is 2 MB, so **both tiers fail and the tool has no working
+path at all** for this property. Two things are wrong beyond the number. First, `shape_drift`
+is the wrong taxonomy - MakeMyTrip did not change the page shape, our own limit was too
+small; the hint ("MakeMyTrip changed the page, or a proxy wrapped it") sends the reader
+somewhere useless. Second, a size cap that rejects the response *after* paying for the fetch
+buys nothing. Phase 1 closed with "Core hotel pricing: USABLE" on the strength of this tool,
+so this is a regression in reach, not a cosmetic error.
+
+### BUG-14 (new): `trip_type: RT` appears not to reach short-route cab listings
+
+Same tool, same day, one flag apart:
+
+| Route | Distance | OW cheapest | RT cheapest |
+|---|---|---|---|
+| bengaluru → goa | 603 km | ₹12,161 | ₹20,264 (+67 %) |
+| goa → kulem | 40 km | ₹2,145 | **₹2,145 (identical)** |
+
+The Kulem RT returned the same 6 cabs at the same fares as the one-way, despite `tripType=RT`
+being present in the URL the tool built and a `return_date` being accepted. Either MakeMyTrip
+quotes a same-day local round trip at the one-way rate, or the RT parameter is not reaching
+the listing on short routes and the tool is silently reporting a one-way as a round trip.
+**The second is a wrong number presented as a right one**, which is the BUG-12 failure mode
+again in a different place, so it should not be left to assumption. A same-day RT is the
+unusual case here (`return_date == date`); an RT with a later return date on the same short
+route would separate the two explanations in one call.
+
+### BUG-15 (new, minor): `approx_hours` is not plausible on long routes
+
+bengaluru → goa returns `distance_km: 603` with `approx_hours: 5`. That is 121 km/h average
+on Indian highways. The 40 km local routes look sane, so the field is probably parsed from
+the wrong element, or a units/format assumption breaks above some threshold. It does not
+touch any fare, but it is the kind of number a consumer would put in front of a user.
+
+### Not a bug, checked anyway
+
+- `known_places` reports `kochi` and `rameswaram` that are absent from `.state/data.json`.
+  By design - `cabs.known_places()` merges `BUILTIN_PLACES` over saved places
+  (`mmt/cabs.py:49`). Verified in source rather than assumed.
+- Error taxonomy stayed correct throughout: `bad_input` for `mmt_hotel_rates` missing its
+  required `city`, `not_in_window` for both train dates with the right `booking_opens`
+  (2026-10-16 outbound, 2026-10-22 return). Trains were re-measured, not inherited.
+- `.state` diff after the whole run is exactly `+kulem`. Nothing else moved.
+
+### Unresolved, and blocked by BUG-13: are hotel figures stay totals or per-night?
+
+`mmt_hotel_search` returns `nights: 6` and an `all_in_inr` it documents as the stay total,
+with `all_in_per_night_inr` derived as `all_in / nights` (checked: 13342/6 = 2224 ✓). Under
+that contract Hyatt Centric Candolim, 5*, comes to **₹2,224/night in peak December** - which
+is not a credible retail rate. Under the other reading the same list makes Resort Primo
+₹25,091/night, which is also not credible. So the list is not internally consistent under
+*either* interpretation, and at least some rows are being read wrong.
+
+The clean way to settle it is `mmt_hotel_rates`, which returns per-room-night rate plans -
+and that is exactly the tool BUG-13 just broke. The fallback cross-check (same hotel, 2-night
+range) was inconclusive because the 2-night search returned a different top 5. **The
+itinerary therefore uses the documented contract, says so on the page, and this stays open.**
+It is the highest-value thing to settle next: it is the single largest MCP-sourced line in
+the total.
+
+### Latency, this run
+
+cab quote 11-31 s (cold 31 s, warm 11-15 s), flight search 29 s cold / 11 s warm, hotel
+search 7 s, `cab_find_place` 20 s, train search ~2 s (tier 1), `hotel_rates` ~20 s to fail.
+The whole 7-call collection batch ran in 105 s on one browser - the single-server design is
+worth roughly a 3x speedup over per-call process spawning.
+
+### Carried forward for the harness
+
+`harness/mcp_client.py` removes the host dependency entirely: any environment that can run
+Python can now drive a real acceptance run, with per-call timings and raw JSON captured for
+audit. An acceptance prompt should still name the commit it must run against - `mmt_version`
+against `git rev-parse HEAD` caught nothing this time only because it was checked first.
+
+---
+
+## Run 2026-09-05 (later) - BUG-13/14/15 fixed; fixing 13 exposed BUG-16
+
+Offline suites after the fixes: **139/139** parsers (up from 112 - four new regression
+tests), 19/19 version, 33/33 watch_server. All three verified live through
+`harness/mcp_client.py`.
+
+### BUG-13 fixed - a size cap that failed the call instead of skipping the cache
+
+The 2 MB `PAGE_SIZE_CAP` was enforced by raising `ShapeDrift` *after* the body had already
+been fetched, so a page that grew past it lost every tier at once. Two things were wrong:
+
+- **The cap belonged to the cache, not the fetch.** An oversized body is still a correct
+  answer. `fetch.get_text` now computes `cacheable = len(text) <= PAGE_SIZE_CAP` and skips
+  `CACHE.put`; it never raises. The cap moved to 8 MB as well, so ordinary large pages are
+  still cached rather than re-fetched every call.
+- **`PAGE_TIER_BYTE_CAP` was a constant nothing read.** The comment claimed page bytes were
+  budgeted separately; `grep` says otherwise - it was referenced exactly once, at its own
+  definition. So the *only* thing bounding resident memory was the hard reject. `Cache` now
+  actually tracks bytes (`_sizeof` counts whole-page `text`), decrements on eviction,
+  expiry, replacement and `clear`, and evicts LRU until both the entry and byte budgets
+  hold. `stats()` reports `bytes`. A single entry larger than the whole budget is kept
+  rather than evicted in a loop.
+
+Live: `mmt_hotel_rates` on the 2.6 MB Hyatt Centric page now returns **24 rate plans**.
+The tool went from dead to working.
+
+### BUG-14 fixed - a same-day round trip is refused, not relabelled
+
+`cabs.validate_trip()` is a new pure function, called first thing in `search()`, that
+rejects `return_date <= date` for `trip_type=RT` (and an unknown `trip_type`, and a
+non-ISO date). The measurement behind it: on goa->kulem, OW and same-day RT returned an
+identical 6 cabs at identical fares, while the same flag on bengaluru->goa moved the
+cheapest from 12,161 to 20,264. MakeMyTrip answers a same-day RT with the one-way listing
+under a `tripType=RT` url, and passing that back as a round-trip quote is BUG-12's failure
+mode - a wrong number wearing a right label. The error names the remedy: quote it as OW,
+because that is what those fares are.
+
+Note this is a real restriction, not just a guard: RT with a *later* return on the same
+40 km route returns a genuine `EmptyValid` (no vendor offers an overnight hire that short).
+
+### BUG-15 fixed - `\d+` matched the wrong half of "11.5"
+
+`TIME_RE` was `\*?(\d+)\s*hr`. Against `*11.5 hr(s)*` it did not truncate to 11 - the engine
+backtracked past `11.`, restarted at the `5`, and matched `5 hr`. An 11.5 hour drive was
+reported as 5, which is wrong by a factor of two and reads as perfectly plausible. Now
+`\*?(\d+(?:\.\d+)?)\s*hr`, parsed through a new pure `cabs.parse_summary()`, returning an
+int when whole so the common case stays `10` not `10.0`. Live: bengaluru->goa now reports
+`approx_hours: 11.5` for 603 km.
+
+### BUG-16 (new, OPEN, and it invalidates the itinerary) - hotel figures are PER NIGHT
+
+Fixing BUG-13 made `mmt_hotel_rates` usable, which finally settled the question the
+acceptance run had to leave open - and the answer is the opposite of what the code assumes.
+Same hotel, same room, only the stay length varying:
+
+| Property | 1 night | 2 nights | 6 nights |
+|---|---|---|---|
+| Hyatt Centric Candolim | 11,800 | 11,210 | 13,342 |
+| Baga Beach Hotel | 2,493 | - | **2,493** |
+
+Under the stay-total reading, nights 2-6 at the Hyatt cost 1,542 between them, and five
+extra nights at Baga Beach are free. **`all_in_inr` is a nightly rate.** It drifts a little
+with the range because MakeMyTrip shows the cheapest nightly rate available across it.
+
+Consequences, none of them fixed yet:
+
+- `mmt_hotel_search`'s `all_in_per_night_inr` divides a nightly rate by `nights`. It is
+  wrong by a factor of `nights` - 2,224 for a 5* Candolim room was never credible.
+- Every itinerary total built on it understates the hotel by roughly `nights - 1` times the
+  nightly rate. `harness/runs/2026-09-05/goa-itinerary.pdf` is wrong for this reason: it
+  carries 13,342 as a 6-night stay total. The order-of-magnitude corrected figure is nearer
+  80,000, which changes the trip total more than every other line combined.
+- The contract needs deciding, not just patching: rename to `nightly_all_in_inr`, drop the
+  bogus division, and either sum the real per-night rates or clearly label a
+  `nights x nightly` estimate. That is an interface change, so it is written down here
+  rather than smuggled into a bug-fix commit.
+
+This is the most valuable thing the acceptance run produced. It was invisible for two phases
+because the number looked plausible and nothing cross-checked it against a different stay
+length - the same shape as BUG-12, which is now three for three on "an unvalidated number is
+worse than a failing one".
+
+---
+
+## Run 2026-09-05 (later still) - BUG-16 fixed: the unit is now in the name
+
+Offline 140/140. The rename is deliberately breaking. Keeping `all_in_inr` and changing
+what it means would have left every existing reader silently wrong, which is the failure
+this bug already caused once.
+
+| Before | After | Why |
+|---|---|---|
+| `base_inr` / `tax_inr` / `all_in_inr` | `nightly_base_inr` / `nightly_tax_inr` / `nightly_all_in_inr` | on both `mmt_hotel_search` rows and `mmt_hotel_rates` plans. The unit is the thing that was wrong, so the unit is in the name |
+| `all_in_per_night_inr` (= all_in / nights) | `stay_estimate_all_in_inr` (= nightly x nights) | the old field divided a nightly rate by nights - wrong by `nights` squared against a real stay total |
+| `cheapest_per_night_inr` | `cheapest_stay_estimate_inr` | same inversion on `mmt_hotel_rates` |
+| `total_base_inr` / `total_tax_inr` / `total_all_in_inr` | `total_base_estimate_inr` / `total_tax_estimate_inr` / `total_all_in_estimate_inr` | `mmt_price_itinerary` summed nightly rates across legs, so a two-night stay counted the same as a fortnight. Each leg now multiplies by its own nights before the sum, and gains `stay_base_inr` / `stay_tax_inr` / `stay_all_in_inr` |
+
+`extra_fees_inr` keeps its name: MakeMyTrip calls it a total, it is not part of
+`priceWithTax`, and its unit is genuinely not established. Better un-prefixed than
+mislabelled a second time.
+
+Everything downstream moved with it: `tools/probe.py` G1/G2/G3 now print `x/night` and G2
+additionally asserts `stay == nightly x nights`, and the offline suite gained a check that
+no un-suffixed price key survives on a summarised row - so a future edit that reintroduces
+`all_in_inr` fails a test rather than a trip.
+
+**Everything is an estimate on purpose.** MakeMyTrip quotes one representative nightly rate
+per range, not a per-date breakdown, so `nightly x nights` is the honest ceiling of what
+this server can know. The word "estimate" is in the field names, the note and the PDF.
+
+### The itinerary was rebuilt on the corrected figures
+
+| | Before | After |
+|---|---|---|
+| Hotel line | 13,342 (read as a 6-night total) | **80,052** (13,342/night x 6) |
+| Grand total | 57,674 | **1,24,384** |
+| Per person | 28,837 | **62,192** |
+
+The hotel went from 23% of the trip to 64% of it, which changes the advice as much as the
+number: the PDF now carries same-search alternatives, and the cheapest credible swap
+(ALOHA Holiday Resort 3*, 4,592/night) brings the trip back to 71,884. Also flagged and not
+used: Resort Primo Bom Terra Verde quotes 25,091/night for a 3*, dearer than both 5*
+properties in the same result.
+
+**Verdict on the acceptance run:** it found a bug that had survived two phases, and it only
+found it because the run was audited rather than admired. The number was plausible, the
+arithmetic was self-consistent, and the one check that would expose it - the same property
+at a different stay length - was blocked by a second bug in a different file.
+
+---
+
+## Run 2026-09-05 — Phase 2 subject run (gemini-2.8-flash): **VOID**, and the harness is why
+
+Full audit in `harness/runs/2026-09-05-acceptance/run-log.md`. The finding that matters is
+not about the model.
+
+**The acceptance test was run inside the repository that contains the answer.**
+`harness/runs/2026-09-05/` holds the guided run's finished `itinerary-data.json` and
+`goa-itinerary.pdf`. The subject read them and shipped that PDF as its deliverable — same
+totals, same labels, same hand-written alternatives paragraph. Its own chat report states a
+*different* total (₹1,26,388) from the PDF it delivered (₹1,24,384), and its own line items
+sum to a *third* number (₹1,26,329). Three totals, no two agreeing, is what copying looks
+like from the outside.
+
+The repo also contains `prompts/goa-itinerary.md` (the audit checklist), `PHASE2-TASKS.md`
+(every gate), `PHASE2-RUNBOOK.md` (every trap, by name) and this file. We spent real effort
+marking paste boundaries so the *operator* would not leak the checklist into the prompt, and
+then handed the subject a filesystem containing all of it. **Guarding the paste while
+mounting the repo is theatre.**
+
+**Fix, and it is the only one that makes the test valid:** point the subject's Cline window
+at an empty scratch folder with only the `makemytrip` MCP server registered. The subject
+needs the tool surface, not the project. It has no legitimate reason to read this repo, and
+every artifact it produces should be written where it works.
+
+### What the run still established
+
+- **GR1/GR2 fired for real, for the first time.** With `kulem` unregistered, the model hit
+  the gap, researched the route, and registered the place itself — as
+  `ChIJo-qKFB7qvzsRoiU9cAzy4Qw` ("Dudhsagar Waterfall Trip - Goa", `is_city: false`), which
+  is *different* from the guided run's `ChIJU_8H2moHvzsRDqa5IZGjLk4` ("Kulem", `is_city:
+  true`). Provably its own work, and mildly interesting that the harvester's first hit is a
+  tour-operator POI rather than the town.
+- **H5 held up under a live trap.** It identified FLY91 IC 5302 at ₹3,099 as landing at SDW
+  and excluded it on both legs, unprompted. The alternate-airport disclosure in
+  `known_gaps` is doing its job.
+- **A relabelled number got through.** The table bills *"Panaji → Kulem, ₹1,945,
+  `mmt_cab_quote`"*. ₹1,945 is the Panaji → **Goa** quote; no Panaji → Kulem quote exists.
+  An MCP figure was moved onto a route the tool never priced — undetectable without the
+  transcript, which is precisely why H6 requires one.
+- **H6 failed on evidence, not judgement.** The exported transcript contains *zero* MCP tool
+  calls — six bash commands and the final report. Cline's export appears to capture only the
+  tail of a session. Whatever the next run produces, **verify the export contains tool calls
+  before closing the session**, or H6 is unscoreable again.
+- **H7 failed outright**: no `fetched_at` or staleness disclaimer anywhere.
+
+Two process lessons, both cheap: a subject model must be a reasoning model (Flash-class was
+the wrong instrument), and the transcript must be checked for content at export time rather
+than trusted.
+
+---
+
+## Run 2026-09-05 — Phase 2 acceptance, subject Sonnet-5: **passes everything but H6**
+
+Full audit in `harness/runs/2026-09-05-acceptance-2/run-log.md`. Subject ran in
+`mmt-acceptance-workspace`, outside this repo — the fix for the void run's contamination,
+and it worked: nothing in the deliverable resembles a previous run.
+
+Deliverable is a 13-page PDF built by a 36 KB script, with two costed plans. Re-summing the
+item lists independently reproduces both totals exactly — Comfort 146,942 + 4% = **152,820**,
+Value 104,398 + 4% = **108,574** — because the subject computed them in code rather than by
+hand. **H-ARITH passes for the first time.**
+
+Three gates are worth calling out:
+
+- **BUG-16's rule held.** Hotels are `3 x 5,985 = 17,955` and `4 x 15,340 = 61,360`, tagged
+  "per night". The first subject to get the per-night unit right, and the first to run
+  against a `mmt_capabilities` that states it. The fix and the disclosure did their job.
+- **H5 was exemplary.** It excluded GOX/SDW from the table and footnoted the cheapest fare
+  it saw — FLY91 at ₹3,099 into Sindhudurg — with the reason it was rejected. The
+  `known_gaps` entry is carrying real weight.
+- **H4 was better than asked.** It named the 8hr/80km package gap as "a documented gap in
+  this MCP", priced a scooter substitute, and derived a day charter from an MCP leg under a
+  `CALC` tag it defined in a source key.
+
+Corroboration the calls were live, since the transcript cannot supply it: the outbound leg
+reads `IndiGo 6E 6554, 19:00->20:20, ₹3,222 + ₹1,145 = ₹4,367` — **identical to this
+project's own independent measurement that morning**, down to the base/tax split.
+
+### BUG-17 (new): `mmt_cab_find_place` registers the first autocomplete hit, silently
+
+The run harvested five places. Look at what they are:
+
+| registered as | actually | `is_city` |
+|---|---|---|
+| `southgoa` | **Bibhitaki Hostel Palolem Goa** | false |
+| `northgoa` | Goa beach | false |
+| `ponda` | Sahakar Spice Plantation Curti Ponda Roa | false |
+| `goaairport` | Dabolim Airport | false |
+| `dudhsagar` | Dudhsagar Trek | false |
+
+The subject then priced inter-base transfers between these and billed them as region-to-
+region legs. Across three runs the first hit has been a town once (`kulem`), a tour operator
+once ("Dudhsagar Waterfall Trip - Goa"), and a hostel here — a coin flip, and nothing in the
+response tells the caller the match is weak. `is_city` was `false` for all five while the
+query was a locality every time, so the signal to act on is already in hand: the tool could
+warn, return candidates, or refuse when a locality-shaped query resolves to a POI. Left as
+is, it is an unvalidated value presented as a good one — the BUG-12 family again.
+
+### The train trigger has never fired, in any run
+
+It is one of the two designed gap-recovery triggers and three subjects in a row have simply
+chosen to fly, so `not_in_window` has never been exercised by a subject. The canonical
+prompt does not ask for a rail comparison and nothing forces one. Either the prompt should
+invite a transport comparison, or the harness should retire the train window as a live
+trigger and rely on the cab-place gap, which has now fired three times out of three.
+
+### H6 is the only thing standing between this and sign-off — and it is our design flaw
+
+The Cline export is not a session transcript: 187 KB of which 98% is a single base64
+screenshot, 4.5 KB of prose, zero `mmt_*` calls. Recovery was attempted and failed — all 35
+Cline task directories were searched for the prompt's typo with no match, and the only other
+hit in VS Code's tree is a saved copy of the same file.
+
+That is three runs and three hosts-of-record failing to produce usable evidence, which is
+the tell that the gate is written wrong. **H6 makes this project's acceptance evidence
+depend on a third-party UI's export button.** The server should record its own calls: an
+append-only JSONL of tool, arguments, elapsed, tier and a result digest, alongside the
+`failures.jsonl` that today records only failures. Then H6 is satisfied from the server's
+own log, independently of the host, and the spot-check is mechanical. Until that exists,
+every future acceptance run is one export bug away from being unscoreable.
+
+---
+
+## Run 2026-09-05 — the server records its own calls (H6 no longer depends on the host)
+
+`mmt/calllog.py` appends one JSON object per tool call to
+`.state/diagnostics/calls.jsonl`, beside the `failures.jsonl` that until now recorded only
+failures. `tools/audit_calls.py` reads it. Offline suite **153/153** (13 new assertions).
+
+**Why, in one line:** three acceptance runs, three hosts-of-record, three unusable
+transcripts — a screenshot, a session tail, and the final artifact. H6 made this project's
+acceptance evidence depend on a third-party UI's export button, and the server already knew
+everything the gate was asking for.
+
+### Design choices worth keeping
+
+- **Hooked into the `@tool` decorator, not `server.py`'s `tools/call`.** `tools/probe.py`
+  and the harness drivers call `TOOLS[...]["fn"]` directly, and an audit log with holes in
+  it is worse than no log at all.
+- **Handled errors are logged too.** `unregistered_place` and `bad_input` are results, not
+  absences; a gate that only sees successes cannot tell "never asked" from "asked and was
+  refused" — which is exactly the distinction the void run's audit turned on.
+- **The result body is inlined** (to `MMT_CALL_LOG_MAX_RESULT`, default 256 KB) so a
+  spot-check finds a fare without a second live call. The **digest is over the full body**
+  either way, so a truncated entry still proves what was returned.
+- **A broken log can never break a call.** Every write is wrapped; `MMT_CALL_LOG=0` disables
+  it. Tested by pointing `DIAG_DIR` under a regular file so `mkdir` raises.
+
+### The spot-check is now mechanical
+
+```
+$ python tools/audit_calls.py --find 12161
+2026-09-05T13:57:55-0700  mmt_cab_quote  {"origin": "bengaluru", "dest": "goa", ...}
+    30774 ms, tier 2, cached False, sha256 ed66b43a0ce540d9
+    found at: cabs[0].all_in_inr
+    found at: cheapest.all_in_inr
+
+$ python tools/audit_calls.py --find 99999
+99999 appears in NO logged call result. It did not come from this server.   # exit 2
+```
+
+That second case is the one that matters. The void run billed *"Panaji → Kulem, ₹1,945,
+`mmt_cab_quote`"* when ₹1,945 was the Panaji → **Goa** quote and no Panaji → Kulem call was
+ever made. Nothing in the deliverable revealed it and the transcript could not be checked.
+`--find` would have named the real call in one command.
+
+H6 in `prompts/goa-itinerary.md`, `PHASE2-TASKS.md` and the runbook now reads against this
+log. The pre-flight truncates it so a run's log is only that run; close-out copies it to
+`harness/runs/<date>/calls.jsonl`, which also gets the evidence into git — `.state/` is
+ignored, so it would not otherwise survive.
+
+**This does not retro-fit the Sonnet-5 run.** The log did not exist while it ran, so that
+run's H6 stays unscoreable. It is scoreable from the next one onwards, without asking the
+host for anything.
+
+---
+
+## Run 2026-09-05 — acceptance run 3 (Sonnet-5): **H6 passes at last, H1 fails**
+
+Full audit in `harness/runs/2026-09-05-acceptance-3/run-log.md`. 24 calls, all recorded by
+the server itself. The failure has moved from the evidence to the subject, which is the
+point of the harness.
+
+**H6 took one command per figure.** Six spot-checks, six traces — a flight fare to
+`itineraries[3].all_in_inr`, a hotel rate to `rate_plans[0].nightly_all_in_inr`, and so on.
+The first acceptance run in four whose numbers could be checked at all. The call log paid for
+itself within an hour of existing.
+
+**H-ARITH was exact**: line items and the category breakdown independently sum to 138,986,
+and every derived line reconciles (`4 x 12,762 = 51,048`, `2 x 4,577 = 9,154`). BUG-16's rule
+held again, and the deliverable reproduced the tool's own caveat almost verbatim —
+*"stay_estimate = nightly rate × nights, an MMT-provided estimate for a date range (a range
+spanning a price change may not match exactly)"*. Disclosure in `mmt_capabilities` is being
+read and repeated.
+
+### H1 failed, and it is the subject's failure, not a documentation gap
+
+The deliverable is all-in throughout: flights as `Rs 9,154` for two, hotels as "Nightly
+all-in". Not one base/tax split anywhere. Every call it made returned `base_inr`/`tax_inr` or
+`nightly_base_inr`/`nightly_tax_inr`, and `capabilities.pricing_conventions.split` says in
+so many words that they are always reported separately. It was told, it had the data, it
+collapsed them anyway. The previous subject printed `3,222 + 1,145 = 4,367`, so this is a
+regression between runs rather than a missing affordance — nothing to fix in the tool.
+
+### Three things only the log could show
+
+1. **The PDF's claim about its own process is false.** It states "only one outbound and one
+   return flight search were run". There were four: it resolved "December 15th" to **2025**
+   first and burned ~200 s discovering that a nine-month-old date returns nothing.
+2. **A leg tagged `[RES]` ("no MMT endpoint exists") was quoted.**
+   `mmt_cab_quote calangute->palolem` returned Rs 2,145; the budget bills Rs 2,800 as desk
+   research. Conservative in rupees, wrong in provenance — and undetectable from the
+   deliverable, which is exactly the class of error H6 was written for.
+3. **The circuit breaker fired and the subject recovered by itself** — two `blocked` at 0 ms,
+   then `mmt_selftest` plus a throwaway Kochi search to re-probe, then it resumed.
+
+### BUG-17 reproduces deterministically
+
+"Calangute Goa" → **"Goa beach"**; "Palolem Goa" → **"Bibhitaki Hostel Palolem Goa"**, the
+same hostel the previous subject got for `southgoa`. Two of four registrations wrong,
+`is_city: false` on all four, and real transfers priced between them. Two runs, same wrong
+hits — this is not luck of the draw, it is the first autocomplete row being taken on trust.
+
+### BUG-18 (new): no past-date guard on flights or hotels
+
+A flight search for `2025-12-15`, run in September 2026, drove a live search page for
+**99 seconds** and answered `empty_valid`. The 2025 hotel searches returned `transport`
+errors and tripped the circuit breaker. Trains check their window and answer `not_in_window`
+in about two seconds; flights and hotels check nothing at all. A past date is `bad_input` and
+is knowable before a byte leaves the machine. It cost this subject ~200 s, two flight
+searches and a circuit trip — and a model resolving a bare "December 15th" to the wrong year
+is not an exotic failure, it is the default one.
+
+### Where Phase 2 stands
+
+Every gate now passes on some run, and every gate has failed on some run — but no single run
+has passed them all. Outstanding, in order of cheapness:
+
+- **BUG-18** — a date guard. Small, and removes a whole class of wasted run.
+- **BUG-17** — a confidence signal on `cab_find_place`. Two runs of evidence.
+- **H1** — subject behaviour; re-run and see whether it recurs.
+- **H2** — never exercised in four runs. Four subjects have all chosen to fly. The trigger
+  should either be retired or the prompt should invite a transport comparison.
+
+---
+
+## Run 2026-09-05 — BUG-17 and BUG-18 fixed
+
+Offline **174/174** (20 new assertions), 19/19 version, 33/33 watch_server. Both fixes are
+disclosed in `mmt_capabilities`, because a guard a model cannot see it will hit is only half
+a fix.
+
+### BUG-18 — a past date is `bad_input`, not a 99-second empty page
+
+`mmt/dates.py` is a pure module: `parse_iso` and `not_past`. Wired into
+`mmt_flight_search`, `mmt_hotel_search`, `mmt_hotel_rates`, `mmt_price_itinerary` (every
+leg, up front, so one bad date cannot half-run a batch) and `cabs.validate_trip`.
+
+Two deliberate choices:
+
+- **The floor is yesterday, not today.** The server runs wherever it runs and MakeMyTrip
+  sells in IST; a strict "before today" test would refuse a legitimate same-day search for a
+  caller a timezone west. A day of slack costs nothing against the nine-month errors this
+  exists to catch.
+- **The hint names the actual trap**: *"If you resolved a bare month and day, the year is
+  probably wrong - today is <date>."* The subject that hit this had resolved "December 15th"
+  to 2025. Telling it the date is invalid is less useful than telling it why.
+
+Measured effect: `2025-12-15` went from **99,552 ms and `empty_valid`** to an instant
+`bad_input`, on all four tools.
+
+### BUG-17 — the harvester says how well it matched, and ranks better
+
+Two changes in one, because the confidence signal alone would have graded a bad answer
+honestly rather than producing a good one.
+
+**Ranking.** `harvest._place_from_captured` now tries the strong tiers (exact name, exact
+first segment) against the full query *and* against progressively shorter leading phrases.
+This is the actual mechanism of the bug: a caller writes "Palolem Goa", appending the
+region; the locality row is just "Palolem" so exact and segment both miss; and the phrase
+then matches by *substring* against "Bibhitaki Hostel Palolem Goa". Trying "Palolem" too
+lets the locality win on a strong tier. The regional rule that makes bare "goa" resolve to
+Panaji rather than Goalpara is untouched and tested.
+
+**Confidence.** `cabs.match_quality(place, query, tier)` is pure and grades the result:
+`high` for the exact/segment tiers, `medium` for regional/prefix, `low` for
+substring/fallback. It also catches the case confidence alone misses — **a locality query
+answered by a named venue** — since a hostel can match its own name exactly. When the
+resolved place is not a city and the query contains no venue word (airport, hotel, resort,
+station, fort, beach…), it downgrades to `low` and raises a warning naming what was actually
+registered. `mmt_cab_find_place` returns the block as `match` and lifts the warning to the
+top level, because a nested field is easy to skim past.
+
+Asking for "Dabolim Airport Goa" and getting Dabolim Airport stays `high` with no warning —
+a venue query answered by a venue is correct, and a fix that cried wolf on it would be
+ignored within a run.
+
+### What is left in Phase 2
+
+- **H1** — subject behaviour, not a tool gap: the last subject collapsed base/tax to all-in
+  although every call returned the split and `pricing_conventions.split` says so. Worth
+  watching on the next run, not worth patching.
+- **H2** — never exercised in four runs; four subjects have all chosen to fly. The train
+  window should be retired as a designed trigger, or the prompt should invite a transport
+  comparison. The cab-place gap has fired 4/4 and carries gap-recovery on its own.
+- No re-run performed for these two fixes, by instruction.
+
+---
+
+## Run 2026-09-05 — `mmt_intercity_options`: one leg, three modes, one unit
+
+Offline **211/211** (37 new assertions). Verified live on Bengaluru → GOI.
+
+The reason for building it is not convenience. **It makes rail unskippable.** Four subjects
+in a row never called `mmt_train_search`, so H2 has never been exercised — not because the
+tool was broken but because nothing made comparing modes the natural move. Now the only way
+to get flight fares for a leg is a call that also returns trains and cabs, and a train
+outside the 60-day window reports `not_in_window` whether the caller thought to ask or not.
+
+### What it normalises, and why that is the point
+
+Three modes, three units, three time formats:
+
+| | unit | duration as returned |
+|---|---|---|
+| flights | per adult | `"01h 20m"`, a string |
+| trains | per passenger | minutes, an int |
+| cabs | **per vehicle** | approximate hours, a float |
+
+Every option now carries `party_total_inr` *and* `per_unit_inr` *and* the `unit` it came
+in. Multiplying the per-vehicle figure by head count, or failing to multiply the per-adult
+one, is the BUG-16 family of error and it is where hand-built itinerary totals go wrong.
+Doing it once here, with the convention still visible, is the whole design.
+
+Live proof from the smoke test — the arithmetic that used to be the model's problem:
+
+```
+flight  IndiGo 6E 6554 nonstop    8734  per adult    4367   80 min   dominated False
+cab     WagonR/Swift HATCHBACK   12161  per vehicle 12161  690 min   dominated True
+```
+
+### What it refuses to do
+
+**It does not recommend.** `dominated: true` marks an option both dearer *and* slower than
+another — a fact. Whether four extra hours is worth Rs 3,000 depends on the rest of the
+itinerary and belongs to the caller. In the live run that left three flights and three cabs,
+with the Rs 9,154 flight correctly dominated by the Rs 8,734 ones at equal duration, and
+every cab dominated. A cheap slow train is explicitly *not* dominated — it is a real
+trade-off, and there is a test asserting so.
+
+**It does not estimate door-to-door time.** A flight is 80 minutes in the air and some
+hours kerb to kerb, and the difference is real — but inventing it would be fabrication. Each
+option states what it `excludes` ("airport transfers at both ends") so the caller can price
+those legs properly.
+
+### Three things the build turned up
+
+- **Partial failure is the normal case, so it is designed for.** The first live call
+  returned zero options and three clean reasons: flights `empty_valid`, trains
+  `not_in_window`, cabs `unregistered_place`. Nothing aborted anything else. That is the
+  `mmt_price_itinerary` pattern applied to modes.
+- **Each mode names places in a different domain**, and a natural call exposes it
+  immediately: "Bengaluru" → "GOI" is fine for flights, meaningless to the cab funnel.
+  `cabs.place_candidates` now also tries the city names an IATA or station code maps to, and
+  the response says which name it actually priced. Without this the tool half-fails on every
+  realistic call.
+- **Mode guards protect the flight budget.** No airport pair resolves for goa → kulem, so no
+  flight search is spent on a 40 km day trip. There is a test that fails loudly if one ever is.
+
+### Sub-calls go through the tool wrapper, deliberately
+
+`_sub()` dispatches through `TOOLS[name]["fn"]` rather than calling `FL.search` directly, so
+each leg lands in `calls.jsonl` as its own entry. Routing around the wrapper would have made
+this one tool opaque to H6 and to flight-budget accounting — the exact thing the call log was
+built to prevent. `calls_made` in the response makes the budget cost explicit too.
+
+**This is a new tool, so hosts need one reconnect to see it** — `tools/list` is snapshotted
+at connect.
+
+---
+
+## Run 2026-09-05 — trains answer with a real fare instead of silence
+
+Offline **235/235** (24 new assertions). Verified live.
+
+`mmt_train_search` on a date past the 60-day reservation window still reports
+`not_in_window` with `booking_opens` — that stays the headline, because it is the answer to
+the question asked. It now *also* runs one extra tier-1 lookup for the furthest date Indian
+Railways prices today and returns it as `indicative`.
+
+Live, for SBC → MAO on 2026-12-15 (booking opens 2026-10-16):
+
+```
+quoted_for 2026-11-03   requested 2026-12-15   7 trains
+  20694 Jodhpur Exp       00:03->08:28   8h 25m   SL Rs 375
+  20676 Vishwamanav Exp   10:00->19:18   9h 18m   2S Rs 225
+  17309 Ypr Vsg Exp       15:30->03:25  11h 55m   SL Rs 395
+```
+
+Previously the honest answer to that query was nothing at all, and nothing is exactly what
+sent four subjects to a web estimate or to dropping the rail leg. This is MakeMyTrip data.
+
+### The design is all about not being mistaken for the real fare
+
+- **The weekday is matched.** 15 Dec is a Tuesday, so it quotes Tuesday 3 Nov rather than
+  the raw boundary. Train schedules vary by day; a fare for a service that does not run on
+  your day would be worse than no fare.
+- **The block names both dates** — `quoted_for`, `requested_date` — and the note says in
+  words that it is *"NOT the fare for 2026-12-15, which cannot exist until 2026-10-16"*.
+- **`not_in_window` is unchanged**, so H2 and every existing caller behave as before, and a
+  failure in the extra lookup is recorded inside the block rather than replacing the real
+  answer. Tested by making the second search raise.
+- **`indicative: false`** skips it.
+
+### In `mmt_intercity_options`: comparable, flagged, and never dominating
+
+Indicative trains join the comparison flagged `indicative` with `quoted_for_date`, and their
+`excludes` says "not bookable until 2026-10-16". One rule makes them safe:
+
+**an indicative option can be dominated but never dominates.** A price for a different date
+cannot prove a bookable option is beaten. Without that rule a Rs 450 rail fare would mark a
+real flight `dominated` and quietly demote something the traveller can actually buy.
+
+Live, Bengaluru → goa, one call, 9 options:
+
+```
+train  20676 Vishwamanav Exp (2S)     450  per passenger  558 min   [2026-11-03]
+flight IndiGo 6E 6554 nonstop        8734  per adult       80 min
+cab    WagonR/Swift HATCHBACK       12161  per vehicle    690 min   dominated
+```
+
+That is the trade-off the whole tool exists to put in front of a reasoning model: rail at a
+twentieth of the airfare for nine hours instead of eighty minutes, on one call, with the
+booking-window caveat attached. **H2 is now not merely exercisable but hard to avoid** — a
+subject pricing this leg gets the train status whether or not it thought to ask.
+
+---
+
+## Run 2026-09-05 — rail options filtered to fast A/C services, Vande Bharat preferred
+
+Offline **258/258** (23 new assertions). Verified live on SBC → MAO.
+
+A nine-hour unreserved 2S seat is not a comparable to a flight, and quoting one makes rail
+look cheaper than anything a traveller would actually book. `mmt_intercity_options` now asks
+for air-conditioned services within reach of the quickest train on the route.
+
+Live, same route as before the change:
+
+```
+7 trains considered -> 4 kept   (0 dropped for no A/C, 3 dropped as slower than 1.25x)
+  20694 Jodhpur Exp        8h 25m  65.8 km/h   cheapest A/C  3A  Rs 955
+  16210 Ajmer Express      8h 38m  64.7 km/h   cheapest A/C  CC  Rs 735
+  16589 Rani Chennamma     8h 58m  62.5 km/h   cheapest A/C  3E  Rs 835
+  20676 Vishwamanav Exp    9h 18m  60.1 km/h   cheapest A/C  CC  Rs 785
+```
+
+Before, the same call surfaced SL at Rs 375 and 2S at Rs 225 as the headline fares.
+
+### Three choices worth recording
+
+**"Fast" is measured, not asserted.** The filter keeps trains within `1.25x` the quickest
+*on that route*, rather than applying a km/h threshold or trusting a name. A threshold that
+suits a 550 km corridor is wrong for a 2,000 km one, and "Express" in an Indian train name
+means little. `avg_kmph` is computed from distance and duration and reported, so the caller
+can see the basis.
+
+**A/C means A/C.** `1A/2A/3A/3E` sleeper and `CC/EC/EA/EV/EM` chair car. `FC` is excluded
+because First Class is not air-conditioned, and the null-class junk rows the listing carries
+are dropped with it. A route with no A/C service returns **no rows** rather than quietly
+falling back to a sleeper - tested, because a silent downgrade is the failure mode this
+project keeps finding.
+
+**The Vande Bharat preference lives in selection, not in the sort.** A Vande Bharat gets a
+slot among the three trains offered even when it costs more than the sleeper beside it, and
+its label carries `[Vande Bharat]`. What it does *not* do is jump the price ordering of the
+final list: the tool documents "undominated first, then by party total", and burying a
+preference inside a cost sort is exactly the hidden judgement `mmt_intercity_options` was
+built to avoid. Without the selection preference, a dearer Vande Bharat would simply be cut
+by cheaper sleepers and never seen.
+
+### Defaults left alone
+
+`mmt_train_search` still returns the **whole** listing by default. `ac_only` and `fast_only`
+are opt-in there and switched on only by the comparison tool, so the raw data tool stays
+raw - a caller who wants the Rs 375 sleeper can still have it, and H2 sees what it always
+saw. Whenever a filter runs, a `filtered` summary reports what was dropped and why; a filter
+that cannot be audited is just a smaller lie.
+
+---
+
+## Run 2026-09-05 — Phase 3, acceptance run 4: **H2 finally passes; H5 fails on a bug we shipped**
+
+Full audit in `harness/runs/2026-09-05-acceptance-4/run-log.md`. 35 calls, server-recorded,
+empty workspace, Sonnet-5.
+
+### H2 passes decisively, and that is the point of the last three days
+
+Four runs, four subjects, and not one had ever called `mmt_train_search` — not because rail
+was broken but because nothing made comparing modes the natural move. This subject used
+`mmt_intercity_options` three times and wrote, unprompted:
+
+> Trains for these December dates are outside Indian Railways' 60-day booking window (opens
+> 16 Oct 2026 for the outbound, 22 Oct 2026 for the return); the fares shown are
+> MakeMyTrip's own indicative quotes for the nearest bookable date on the same weekday, not
+> the actual 15/21 Dec fare.
+
+That is the indicative-fare design working exactly as intended: a real number where there
+used to be silence, and a subject that repeated the caveat rather than laundering it.
+**H-ARITH was exact again** (134,092 line-by-line, 67,046 per person, every derived line
+reconciling) and **H6 spot-checked 5/5**.
+
+### BUG-19 (new, serious): `alternate_airport` only looks at arrivals
+
+`flights.py` flags an itinerary when it *lands* somewhere other than the airport asked for.
+Nothing checks the **departure**, and the `note` is emitted only in that direction. So on a
+GOI→BLR search:
+
+```
+FLY91 IC 5301   SDW->BLR   Rs 3,699   alternate_airport = None   note = None
+IndiGo 6E 6163  GOI->BLR   Rs 5,994
+```
+
+`mmt_intercity_options` filters on that flag, so it presented IC 5301 as the cheapest,
+undominated, unflagged return option. The subject took it, and its itinerary now says
+*"Sedan cab to Dabolim Airport (~40 km, ~1 hr). Depart Goa 09:20 on FLY91 IC 5301."* —
+**a trip that cannot be taken**, since the flight leaves from Sindhudurg 85 km away. The
+return airfare is understated by 38% and the recommendation rests on it.
+
+Run 2's subject caught this trap unaided. Run 4's subject was misled *by the tool built to
+prevent this class of error*. That is the sharpest lesson available: a comparison layer
+inherits every blind spot of what it aggregates, and it converts a visible trap into an
+invisible one. Fix is two-sided — flag departure mismatches in `flights.py` and filter on
+`from` as well as `to` in `intercity_options`.
+
+### BUG-17 worked, and a subject acted on it
+
+The ranking fix landed: **"Calangute Goa" now resolves to `Calangute`** (`is_city: true`)
+where the previous run got "Goa beach". Better, the warning drove a self-correction:
+
+| query | resolved to | confidence |
+|---|---|---|
+| "Goa Airport Dabolim" | **Comfy Car Rentals Goa** | low, warned |
+| "Goa International Airport" | **Manohar International Airport (GOX)** | medium, warned |
+| "Dabolim Airport Goa" | **Dabolim Airport** | high |
+
+Three attempts, then it priced its transfers against the right airport. Without the warning
+it would have quoted cab fares from a car-rental office. **This is the first time a
+disclosure this project added visibly changed what a subject did.**
+
+Refinement needed: `"Palolem Goa"` → `Palolem` scored **low** on an `exact_shortened` tier
+solely because MakeMyTrip marks Palolem `is_city: false`. A false warning on a correct
+answer, and false warnings are how real ones get ignored. A strong tier should not be
+downgraded by `is_city` alone.
+
+### H1 is a pattern, not an outlier
+
+This run was meant to settle whether run 3's H1 failure was a one-off. It was not — two
+subjects in a row collapsed base/tax into all-in, though every call returns the split and
+`capabilities.pricing_conventions.split` states it plainly. Run 2 did print
+`3,222 + 1,145 = 4,367`, so it is achievable. A gate two of three subjects fail is telling us
+about the surface rather than the subjects: `mmt_intercity_options` carries `base_inr` and
+`tax_inr` on its rows and never mentions them in its `note`, which is the cheapest place to
+push back before touching the prompt.
+
+### Phase 3 status
+
+Nine gates pass, two fail. **H5's failure is ours to fix, and H1's is arguably ours too.**
+Phase 3 does not close on this run — but for the first time nothing is unscoreable, and both
+failures point at code rather than at evidence.
+
+---
+
+## Run 2026-09-05 — BUG-19 fixed, plus the two smaller things run 4 exposed
+
+Offline **271/271** (13 new assertions). Verified live on the exact call that misled run 4.
+
+### BUG-19: nearby airports at both ends
+
+`flights.py` flagged an itinerary only when it *landed* somewhere other than the airport
+asked for. `parse_docs` now takes `origin` as well as `dest` and sets `alternate_arrival` /
+`alternate_departure` separately, both raising the existing `alternate_airport` flag; the
+`note` names whichever end is affected. `mmt_intercity_options` filters on the flag as
+before, so it now drops both, and its `unavailable` entry counts which end was wrong.
+
+The live proof, on the same GOI→BLR call run 4 made:
+
+```
+before:  FLY91 IC 5301  Rs 7,398 for two   offered, undominated, unflagged
+after:   IndiGo 6E 6163 Rs 11,988 for two  cheapest honest option
+         excluded: 13 itinerary(ies) use a different airport at one end
+                   (0 arrive elsewhere, 13 depart elsewhere)
+```
+
+**Thirteen of the itineraries depart from somewhere other than Goa** — more than half the
+result set, every one of them previously unflagged and eligible to be chosen. The return
+airfare correction is 62%.
+
+The scale of that number is the finding. This was not a rare edge: on this route the
+majority of what MakeMyTrip volunteers for a Goa departure leaves from another state, and
+the server had been silently passing all of it through since flights first worked.
+
+### The `is_city` false warning
+
+`match_quality` downgraded any non-city result to `low` when the query had no venue word.
+That warned on `"Palolem Goa"` → `Palolem`, which is exactly right, purely because
+MakeMyTrip files Palolem as a non-city locality. A strong tier is now trusted: if the
+harvester found a row actually *named* what was asked for, `is_city` does not override it.
+The real failures still warn - the run-4 fallback to "Comfy Car Rentals Goa" and the
+substring match onto "Bibhitaki Hostel Palolem Goa" both keep their warnings, and there are
+tests pinning all three cases.
+
+False warnings are how true ones get ignored, and this project has exactly one subject-facing
+warning that has ever changed a subject's behaviour. Worth keeping sharp.
+
+### H1: the note now says it
+
+`mmt_intercity_options` carried `base_inr` and `tax_inr` on flight and cab rows and never
+mentioned them. Its `note` now tells the caller to report them separately and says why - a
+blended number is how budgets end up understated. This is the cheapest possible intervention
+before touching the prompt, and if a third subject still collapses the split, the answer is
+that H1 is asking for something the surface does not encourage and the gate or the schema
+needs rethinking rather than the model.
+
+### Phase 3 status
+
+Both failing gates from run 4 now have fixes with regression tests. One more subject run
+closes Phase 3 - and it is cheap now: the call log means the audit needs nothing from the
+operator but a file copy.
+
+---
+
+## Run 2026-09-05 — acceptance run 5: **every mandatory gate passes**, and one server bug now gates Phase 3
+
+Full audit in `harness/runs/2026-09-05-acceptance-5/run-log.md`. 42 calls, empty workspace,
+Sonnet-5, 11-page deliverable.
+
+**First clean sweep.** H1 through H7, H-ARITH and GR1-GR4 all pass, completeness 9/9.
+
+### H1 passed because of one sentence
+
+Two subjects in a row had collapsed base/tax while the schema returned it correctly and
+`capabilities` stated the convention. The only thing that changed was a sentence in
+`mmt_intercity_options`' `note` telling the caller the rows carry `base_inr`/`tax_inr` and
+to report them apart. This subject split them on flights *and* hotels, adding a
+"Nightly (base+tax)" column of its own.
+
+The lesson generalises past this gate: **a correct schema that says nothing about how to use
+it is not enough.** Two runs of silence, one sentence, gate cleared.
+
+### The best behaviour of any run so far was not required by any gate
+
+Every GOI→BLR flight search failed. Instead of dropping the leg or inventing a fare:
+
+> **FLIGHT (chosen, ESTIMATED)** — MMT flight search failed twice for GOI→BLR on this date
+> (empty response / blocked) — **DATA GAP**. Estimate below uses the outbound non-stop
+> IndiGo fare as a same-class proxy.
+
+plus a paragraph calling it "a known site-blocking issue, not a real 'sold out' signal", a
+₹4,300-4,600 planning range, and a note marking it one of the two widest-uncertainty lines in
+the budget. Nothing in H1-H7 asks for that. It is the thesis of the project, produced
+unprompted.
+
+(It says the search failed "twice"; the log shows three attempts. Under-reporting its own
+effort, which is the harmless direction, but it is a self-report slip and the log is why we
+know.)
+
+### BUG-20 (new): flight search fails `empty_valid` intermittently, at ~99 s a time
+
+Four of five flight searches in this run returned "No flight itineraries parsed" after about
+99 seconds each. Runs 3, 4 and 5 all hit it. It is now the single biggest reliability problem
+in the server, and it did three things here:
+
+1. **It denied the run its return-leg data**, so BUG-19's departure-exclusion path was never
+   exercised by a subject. That fix stands on unit tests and one operator live check.
+2. **It pushed the run over the call budget** — five flight searches against "two plus one
+   retry". `PHASE2-TASKS.md` says exceeding the budget voids a run. Applied literally, this
+   sweep is void; applied to the rule's purpose (politeness, not hammering), a subject
+   retrying a call that returns nothing is behaving reasonably. Until BUG-20 is fixed, this
+   rule is a coin flip and will keep voiding otherwise-clean runs.
+3. **A 99-second failure is worse than a fast one.** The caller cannot distinguish a blocked
+   render from a genuinely empty route, and pays a minute and a half to find out. A shorter
+   timeout with a `blocked` verdict would be more honest than a long `empty_valid`.
+
+### BUG-17 is close to done
+
+Seven of eight place lookups resolved `high` and correct on the first attempt, including
+`Palolem Beach Goa` → `Palolem Beach` with **no** false warning - the refinement working.
+Five of seven registered places are `is_city: true`, the cleanest harvest of any run, against
+run 4's hostel and car-rental office.
+
+The residual: query variants are stripped only from the **right**, so a region-first query
+("Goa Dabolim Airport") falls through to `fallback`. It got the right airport by result
+ordering rather than by ranking, and warned about a correct answer. Token-subset matching
+instead of leading-phrase prefixes would close it.
+
+### Phase 3 status
+
+Gates: **clean**. Blocking the sign-off: **BUG-20**, both because it voids this run on a
+strict budget reading and because it prevented the one gate-relevant fix from being exercised.
+Fix it, then one more run - and that run is cheap.
+
+---
+
+## Run 2026-09-06 — BUG-20 fixed: a block says so in 30 s instead of an empty route in 99
+
+Offline **285/285** (14 new assertions), 19/19, 33/33. Verified live on the route that failed
+three times in run 5.
+
+### What was wrong
+
+`harvest_flight_search` waited out its entire 90-second deadline and then returned whatever
+it had — usually `""` — which `parse_stream` turned into zero itineraries and the tool
+reported as `empty_valid`: *"No flight itineraries parsed."*
+
+Two separate errors in that. **A search that has produced no stream at all after half a
+minute is not going to produce one**, so the remaining sixty seconds bought nothing. And
+*"no flights on this route"* is a different claim from *"the page never opened its data
+stream"* — the first is a fact about Goa, the second is a block. Saying the second quickly is
+worth more than saying the first slowly and wrongly.
+
+### The fix
+
+A pure `stream_verdict()` decides `continue` / `done` / `blocked` from elapsed time, bytes
+collected and how many polls have passed without growth — pure so the timing rules are
+testable without a browser:
+
+- **no bytes at all by 30 s** → the funnel did not take. Re-visit the funnel **once inside
+  the call**, then give up with `Blocked` naming what happened.
+- **bytes that stop growing for ~7.5 s** → the stream has finished. Return it; if it parses
+  to nothing, `empty_valid` is then an honest answer rather than a timeout in disguise.
+- **20 KB** → a full result set, stop early.
+
+The internal re-funnel is the part that matters. `flights.search` already caught `Blocked`
+and retried once on a recovered browser, so that path was free; but a retry the *caller*
+makes costs another tool call and, in an acceptance run, another unit of the flight-search
+budget. Doing one re-navigation inside the call turns three caller-level retries at 99 s each
+into one call that fixes itself.
+
+### Live
+
+The GOI→BLR leg that failed three times in run 5 returned **25 itineraries in 35 s**, then
+**28 s** on a second try. Both well inside the old 99-second failure, and the data is real.
+
+### And a cosmetic bug the live check caught
+
+The new both-ends note read *"13 depart from a different airport than **goi**"*.
+`" and ".join(parts).capitalize()` uppercases the first character **and lowercases every
+other one** — and the rest of that string is airport codes. Fixed to slice the first
+character instead. A reminder that `.capitalize()` is almost never what you want on a string
+containing identifiers.
+
+### BUG-19 at scale, incidentally
+
+That same note reports **13 of 25** itineraries departing from a different airport on a
+GOI→BLR search, and 14 on the run before. More than half of what MakeMyTrip volunteers for a
+Goa departure leaves from another state. The severity estimate in the BUG-19 entry was not an
+outlier reading.
+
+### Phase 3
+
+The blocker is cleared. One more subject run should close it — and the flight-budget question
+that made run 5 ambiguous should not recur, because the server now fixes its own funnel
+rather than making the caller spend searches on it.
+
+---
+
+## Run 2026-09-06 — acceptance run 6: BUG-19 and BUG-20 confirmed fixed; H1 and H2 fail together
+
+Full audit in `harness/runs/2026-09-06-acceptance-6/run-log.md`. 53 calls, empty workspace,
+Sonnet-5, 10-page deliverable. The floating date moved to 16 Dec, so nothing could be reused
+from earlier runs.
+
+### Both fixes held, in a subject's hands
+
+**BUG-20.** Two flight searches, both successful, no caller retries — exactly the budget for
+the first time in four runs. The GOI→BLR leg took **116 s**, which is the fix rather than a
+regression: run 5 failed that exact leg three times at ~99 s each and never got data. The
+harvester now spots the missing stream at 30 s, re-visits the funnel inside the call, and
+returns 25 itineraries. A slow success beats three fast failures, and the caller spends one
+search instead of three.
+
+**BUG-19.** The subject wrote, unprompted:
+
+> A FLY91 fare at Rs 3,099/adult exists on both dates but lands at Sindhudurg (SDW) … —
+> **excluded as false-cheap**. MakeMyTrip flags **13 of 25 itineraries per search** as
+> landing at GOX (Mopa) or SDW; these were also excluded.
+
+Run 4's subject walked into that trap and produced an itinerary that drove to Dabolim and
+boarded 85 km away. This one saw the flag, named it, and excluded it on both legs.
+
+H-ARITH was exact again (131,535, with seven category subtotals reconciling independently),
+H6 5/5, H3/H4/H5/H7 all pass.
+
+### H1 and H2 failed for a single reason, and it is a design lesson
+
+**The subject never called `mmt_intercity_options`** — not once, though `mmt_capabilities`
+was its first call and lists that tool as "PREFER THIS for an intercity leg". It used
+`mmt_flight_search`, `mmt_hotel_search` and `mmt_cab_quote` directly.
+
+Both failures follow from that:
+
+- **H2**: rail reaches a subject only through `intercity_options` or a deliberate
+  `mmt_train_search`. Five of six runs have no train line; the one that passed is the one
+  that used the comparison tool.
+- **H1**: the base/tax instruction added after run 4 lives **only** in `intercity_options`'
+  `note`. A subject working through the individual tools never sees it.
+
+So run 5 did not show that the nudge works in general — **it showed the nudge works in the
+tool that carries it.** Guidance that applies to every priced tool cannot live in one of
+them, and a "prefer this tool" line in `capabilities` is not enough to redirect a subject
+that has already decided how to decompose the problem. The split rule belongs in the flight
+and hotel tools too, and the rail-exists rule belongs wherever a one-way intercity leg is
+priced.
+
+This is the same shape as every other lesson in this file: **a correct value in a place the
+caller does not look is not a correct answer.**
+
+### BUG-21 (new, low): every cab route reports `distance_km: 40`
+
+All nine cab quotes returned `km=40` regardless of endpoints — Agonda→Mollem (~70 km),
+Calangute→Old Goa (~15 km), Airport→Calangute (~40 km) alike. The subject spotted it:
+*"regardless of actual endpoints — this is MakeMyTrip's standard outstation package
+granularity."* It is MMT's own summary, not our parse, but we surface it as `distance_km` and
+derive `all_in_per_km_inr` from it, so both are unreliable on short routes — and it is the
+source of BUG-15's odd "4 hr" for 40 km. Either suppress the derived per-km figure when the
+distance looks like a package bucket, or label it as one.
+
+### BUG-17's residual, second run running
+
+`"Goa Airport Dabolim"` → "Comfy Car Rentals Goa" (low, warned), then a retry with
+`"Dabolim Airport Goa"` → "Dabolim Airport" (high). Identical to run 4. The warning works and
+the subject self-corrects, but a region-first query costs ~20 s every time because variants
+are stripped only from the right. Two runs of the same avoidable detour is enough to fix it.
+
+### Phase 3 status
+
+Seven runs in, the server-side defect list is short and the remaining gate failures are about
+**where guidance lives**, not whether the data is right. Outstanding: move the base/tax and
+rail-comparison guidance into the individual tools (H1, H2), token-subset place matching
+(BUG-17 residual), and the `distance_km` package-bucket label (BUG-21).
+
+---
+
+## Run 2026-09-06 — the single-mode searches are no longer exposed
+
+Offline **308/308** (23 new assertions), 19/19, 33/33. Verified over a real MCP connection.
+
+`mmt_flight_search`, `mmt_train_search` and `mmt_cab_quote` are hidden from `tools/list`.
+`mmt_intercity_options` is now the interface for pricing a journey between two places.
+**12 tools advertised, 15 registered.**
+
+### Why, from the runs rather than from taste
+
+Run 6 settled it. Its subject never called `mmt_intercity_options` — despite
+`mmt_capabilities` being its first call and listing that tool as preferred — and both of its
+gate failures followed from that one choice: no rail line anywhere (H2), and no base/tax
+split (H1), because the split instruction lived only in that tool's note. Five of six runs
+have no train line, and the one that passed is the one that used the comparison tool.
+
+A "prefer this tool" line does not redirect a subject that has already decided how to
+decompose the problem. Removing the alternative does.
+
+### Hidden, not deleted — and the distinction is load-bearing
+
+They stay registered and callable by name. `tools/probe.py`, `mmt_selftest` and
+`mmt_intercity_options` itself all reach them through `TOOLS`, and a caller who knows a name
+can still call it. Verified live: `mmt_train_search` called by name still answers
+`not_in_window`. What changed is that a model browsing the tool list is not offered a way to
+price one mode in isolation.
+
+### Two things the hide *required*, which are the interesting part
+
+**The station guard was a latent bug that this change would have promoted.**
+`resolve_station` accepts any 2-5 letter word as a station code — harmless while a caller
+typed one deliberately, wrong once every leg routes through one tool, because `colva` and
+`kulem` are five letters and a hotel-to-hotel transfer would have fired a train search on a
+route that does not exist. New `trains.is_probable_station()`: a known name, or something
+that actually looks like a code (short, alphabetic, upper case). A bare lower-case `sbc` now
+reads as a place name, which is the documented rule.
+
+**`pickup_time` was missing.** The hidden cab tool had it and the comparison tool did not, so
+hiding one without adding the other would have silently pinned every airport transfer to
+10:00. Run 6 used 14:00 for exactly this.
+
+Both are the shape of thing worth expecting whenever an interface narrows: **the survivor
+inherits every capability the hidden tools carried, and every assumption their callers were
+making.**
+
+### What it costs, measured rather than assumed
+
+The worry with one door is that a local transfer pays for a flight and train search it does
+not need. Live, `goa → panaji`:
+
+```
+31 s   calls_made={'mmt_cab_quote': 1}   3 options
+  · flight | unknown airport 'panaji'
+  · train  | 'panaji' is not a station name or code, so no train search was spent
+```
+
+One cab quote, the same cost as the hidden tool, with the skips explained. The mode guards
+were already doing this work; the hide just made them load-bearing.
+
+### H1 is still not fixed by this
+
+Hiding intercity tools does nothing for hotels, which were **32 of run 6's 53 calls** and 45%
+of its budget, and whose rows also lacked the split. The base/tax instruction is now in
+`mmt_hotel_search` and `mmt_hotel_rates` as well, where a subject working through the hotel
+tools will actually meet it. Whether that is enough is a question for run 7, and it is the
+same lesson a third time: **guidance has to live where the caller is looking.**
+
+---
+
+## Run 2026-09-06 — acceptance run 7: **clean sweep. Phase 3 closes.**
+
+Full audit in `harness/runs/2026-09-06-acceptance-7/run-log.md`. 36 calls, empty workspace,
+Sonnet-5, 9-page deliverable, **2 flight searches** — inside the budget for the first time
+alongside a full pass.
+
+**Every mandatory gate passes on one run**, from a subject that saw only the narrowed
+interface, with the evidence produced by the server itself rather than a host export.
+
+### The hide made the run cheaper, not more expensive
+
+The objection to routing everything through one tool was cost. Measured: **calls fell from
+53 to 36**, because six local transfers each cost a single cab quote at 10-12 s, the mode
+guards skipping flight and train with a stated reason. Only the two genuine intercity legs
+ran all three modes.
+
+### H1 finally generalised, and the sequence is the lesson
+
+| run | where the base/tax instruction lived | result |
+|---|---|---|
+| 3, 4 | nowhere — a correct schema, silently | collapsed to all-in |
+| 5 | `mmt_intercity_options` note | split — the subject used that tool |
+| 6 | same | collapsed — the subject bypassed that tool |
+| 7 | intercity note **and** `mmt_hotel_search` / `mmt_hotel_rates` | split on the cover, in the mode table and in the hotel table |
+
+**Guidance has to live where the caller is looking, in every tool it applies to.** Four runs
+to learn it; it is the most portable thing in this file.
+
+### H2 passed the way it was designed to
+
+A per-leg table of flight, train and cab with `Base`, `Tax`, `Total (2 pax)` and a
+**Dominated?** column — the comparator's output rendered nearly verbatim — plus the caveat,
+unprompted:
+
+> *Train fares are indicative — this route falls outside IRCTC's 60-day booking window until
+> 17 Oct 2026, so MakeMyTrip quoted the nearest priced date (4 Nov 2026, same weekday
+> pattern) as a stand-in for comparison, not the 16 Dec fare itself.*
+
+4 Nov is a Wednesday, matching 16 Dec: `furthest_bookable`'s weekday matching exercised on a
+second day of the week and reported correctly.
+
+### BUG-18 earned its keep in front of a subject
+
+The subject resolved "December 16th" to **2025** and was refused twice in **0 ms**. Run 3
+made the identical mistake and paid ~200 seconds and two flight searches for it.
+
+### What the seven runs actually taught
+
+Every substantive bug in this project has been the same bug wearing different clothes: **an
+unvalidated value presented as a good one.** The Akamai stub counted as success (BUG-12); a
+nightly rate was labelled a stay total (BUG-16); a flight from another state was offered as a
+Goa departure (BUG-19); a car-rental office was registered as an airport (BUG-17); a blocked
+page was reported as an empty route (BUG-20). Each was found by a run that *used* the value
+rather than by a test that checked its shape.
+
+And the fixes divide cleanly in two: make the server refuse to state what it does not know,
+and put what it does know where the caller will read it. Nothing else moved a gate.
+
+### Left open, none of them blocking
+
+- **BUG-21** — every cab route reports `distance_km: 40`, so the derived per-km figure is
+  unreliable on short routes. MakeMyTrip's own bucketing; needs labelling, not fixing.
+- **BUG-17 residual** — a region-first query ("Goa Dabolim Airport") still falls to
+  `fallback`; and `basilica` is missing from the venue-word list, so a correct basilica
+  match warns. Both cost a retry, neither costs a wrong number.
+- The **call-log rotation** noted when the log was built: unbounded at ~4.8 KB/call.
+  Needed before anyone else runs this.
+
+---
+
+## Run 2026-09-06 — the three open items closed
+
+Offline **340/340** (32 new assertions), 19/19, 33/33. Both data-facing fixes verified live.
+
+### BUG-21 — a package bucket is not a route distance
+
+MakeMyTrip answers a short outstation search with its standard local-hire package instead
+of the real route: run 7 got **40 km / 4 hr for every intra-Goa leg**, whether the endpoints
+were 15 km apart or 70. The packages are sold as 4hr/40km, 8hr/80km and so on — exactly
+10 km per hour, a multiple of 40 — which is what makes them recognisable. A real route
+almost never lands there: 603 km in 11.5 h is 52 km/h, 438 km in 10 h is 44.
+
+`cabs.is_package_bucket()` detects it. The distance is still reported, because it is what
+MakeMyTrip said, and a new `distance_basis` says which kind it is. What does **not** survive
+is `all_in_per_km_inr` — a per-km rate computed against a bucket is a made-up number, and it
+is the kind that looks fine. A `distance_note` says so in words.
+
+Live: `goa → panaji` now returns `km 40` with **no per-km figure**.
+
+This is the mildest form of the project's recurring bug — not a wrong number, but a right
+number that invites a wrong derivation. Deleting the derivation was cheaper than explaining
+it.
+
+### BUG-17 residual — match any contiguous window, not just leading phrases
+
+Trying shorter *leading* phrases fixed "Palolem Goa". It never fixed the mirror image:
+"Goa Dabolim Airport" puts the region first, so no leading phrase is ever the place name and
+the query fell to `fallback` — in runs 4 and 6, each time costing a wasted 20-second lookup
+before the subject rephrased. `_query_variants` now yields every contiguous run of words,
+longest first, skipping single words that are only region names so "goa" never stands in for
+the place someone asked about.
+
+Live: `"Goa Dabolim Airport"` → **Dabolim Airport, high, `exact_shortened`, no warning**, on
+the first attempt. In run 4 the same query registered a car-rental office.
+
+Also added `basilica`, `cathedral`, `chapel`, `museum`, `palace`, `jetty` and `terminus` to
+the venue words, so run 7's one false warning — a basilica query answered by the basilica —
+no longer fires.
+
+### Call-log rotation
+
+The log I added in this session grew without limit at ~4.8 KB per call. It now rolls over at
+`MMT_CALL_LOG_MAX_BYTES` (16 MB, about 3,300 calls) keeping one previous generation, so the
+whole thing is capped near 32 MB. Rotation rather than trimming: rewriting a large file to
+drop old lines costs more than it saves, and an audit wants whole entries rather than a file
+truncated mid-JSON. `read()` deliberately ignores the rotated generation — a run truncates
+the log at pre-flight, so the current file *is* the run.
+
+An append-only diagnostics log with no ceiling is a bug in anything anyone else installs, and
+this was mine.
+
+### Where the project stands
+
+Phases 1-3 closed. **No open bugs.** The remaining work is the deploy story — hardening for
+other people's machines, packaging as a Claude Desktop extension, and the redistribution
+question the README's Legal section already raises.
+
+---
+
+## Run 2026-09-06 — deploy: a doctor, a Claude Desktop extension, and an install path
+
+340/340 offline, 19/19, 33/33 unchanged. Two new tools, both exercised end to end.
+
+### `tools/doctor.py` — the first thing an installer runs
+
+Answers "will this start on this machine" in seconds: Python version, playwright, a usable
+Chrome, a writable data folder, the server importing, and whether MakeMyTrip answers from
+this connection at all. Every failure prints the command that fixes it; the exit code is the
+number of things still wrong, so a script can gate on it.
+
+Two details worth keeping:
+
+- **It asks the server's own `playwright_available()`** rather than importing playwright its
+  own way. The first draft did the latter and reported "playwright is not installed" on a
+  machine where it plainly was — playwright exposes no `__version__` attribute. A doctor that
+  disagrees with the thing it is diagnosing is worse than no doctor, so it now delegates and
+  reads the version from package metadata.
+- **It states the privacy footprint in place**: a device id and saved cab places, a Chrome
+  profile holding makemytrip.com cookies, and a log of every call with its results — all
+  local, delete the folder to reset. That belongs where someone is deciding whether to
+  install, not three pages into a README.
+
+### `tools/build_mcpb.py` — a Claude Desktop extension
+
+An `.mcpb` is a zip of the server plus a `manifest.json`, installed in one click instead of
+hand-editing `claude_desktop_config.json` with absolute paths. The manifest was written
+against the published spec and then **validated with the official `@anthropic-ai/mcpb`
+CLI** — *"Manifest schema validation passes!"* — and the build shells out to that packer when
+`npx` is available rather than trusting this repo's reading of the format.
+
+**Playwright is deliberately not bundled.** It is 107 MB, and 102 MB of that is a driver
+carrying a platform-specific node binary — vendoring it would produce a Windows-only file a
+hundred times the size of the code it contains. The extension runs the system `python`, so a
+pip-installed playwright resolves normally. `--vendor` exists for anyone who wants a
+self-contained, platform-locked build. The bundle is **80 KB**.
+
+Verified by extracting the built `.mcpb` and speaking MCP to it from the packaged layout:
+handshake, `tools/list` returning **12 tools with the hide intact**, and a `mmt_version`
+call answering. The packaging works, not just the manifest.
+
+### What no installer can do
+
+Three requirements survive any packaging, and `doctor.py` checks all three: Python 3.10+,
+Chrome or Edge installed, and a **residential** connection — MakeMyTrip's CDN refuses
+datacenter IPs, so a VPN or cloud host cannot work. Linux is effectively out, because the
+site blocks headless browsers and this needs a headed one.
+
+### The step that is not technical
+
+`README.md` still says *"Don't redistribute it"*, and `docs/AGENT-PROMPT.md` says *"Do not
+publish this to any registry or package index."* Everything above makes installation easy for
+**whoever is given the repo**; it does not resolve whether it should be handed to anyone. The
+politeness budget the project is built on — one device id, personal volume, no polling — is a
+per-installation property, and a hundred installs is a hundred device ids against the same
+endpoints. That is a decision for the project owner and it has deliberately not been made
+here: no wording in the Legal section was changed.
+
+---
+
+## Run 2026-09-07 — pre-publication scan: the device id was in the repo
+
+Before making a private repo public, the tracked tree was scanned for anything that should
+not be published. No credentials, no tokens, no email addresses — the `password`/`token`
+matches are all prose describing why the server *avoids* authenticated paths.
+
+One real find: **the stable device id appeared in 24 tracked files** — every
+`state-before/baseline/after.json` snapshot and the run logs quoting them.
+
+It is not a credential; there is nothing to log in to. The risk is different and more
+specific: that id is the single identity this installation presents to MakeMyTrip, and the
+politeness model the project rests on is *one device, one person*. Published, anyone could
+paste it into their own `data.json`, and MakeMyTrip would see one "device" generating many
+people's traffic — which would get that id blocked and would break exactly the norm the code
+is written to keep.
+
+Handled the way a leaked identifier should be, rather than by hiding it:
+
+1. **Redacted** in all 24 tracked files (`00000000-…`), so the tree does not advertise it.
+2. **Rotated** the live id, so the value that remains in git history is dead.
+
+Rewriting 36 commits of history to purge the old value was considered and rejected: rotation
+makes the published string worthless, which is the actual goal, and history rewriting on a
+repo about to be shared costs more than it buys.
+
+Worth generalising for anyone shipping something like this: **a stable identifier minted at
+install time is exactly the kind of value that ends up in test fixtures**, because harness
+snapshots record state and state is where it lives. Grep for it before a repo changes
+visibility.

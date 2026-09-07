@@ -93,14 +93,16 @@ The brief is right: the plan calls `flight_search` outbound, `train_search` outb
 
 ## 4. No arithmetic gate for the grand total - **confirmed**
 
-Flights are per adult; hotels are stay totals for the whole range; cabs are per vehicle.
+Flights are per adult; hotels are **per night** (corrected 2026-09-05, BUG-16 - this
+review said "stay totals for the whole range", which was wrong); cabs are per vehicle.
 The audit has C5 ("per-person vs total clearly distinguished") but **no gate checks the
 arithmetic of combining them** - and that is precisely where a wrong grand total comes
 from. The server's own philosophy (base+tax==all_in asserted everywhere) backs this up.
 
 **Change:** new mandatory gate **H-ARITH**: *Every MCP-derived number reconciles
 arithmetically to the grand total: round-trip flights = (outbound + return) x 2 adults;
-hotel = the stay-total the tool returned, counted once; cab = per-vehicle x1 (or split
+hotel = nightly x nights (the tool's stay_estimate_all_in_inr), counted once; cab =
+per-vehicle x1 (or split
 per head, stated); per-person total = grand total / 2; every subtotal equals the sum of
 its line items.* The auditor re-sums the line-item table by hand and must reach the same
 grand total.

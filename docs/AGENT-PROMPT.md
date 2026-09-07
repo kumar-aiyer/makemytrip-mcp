@@ -47,14 +47,19 @@ plainly rather than silently swallowed.
 4. **Politeness.** One stable device id (never a rotating pool), concurrency capped at 4,
    150–400 ms jitter between batched calls, one retry maximum, no scheduled polling, no price
    history harvesting.
-5. **Base and tax stay separate.** Every price surfaces as `base_inr`, `tax_inr`,
-   `all_in_inr`. Never emit a single blended figure. This is a correctness rule, not a style
-   preference — see §5.
+5. **Base and tax stay separate, and the unit is in the name.** Every price surfaces as
+   base/tax/all-in — `base_inr`, `tax_inr`, `all_in_inr` for flights and cabs, and
+   `nightly_base_inr`, `nightly_tax_inr`, `nightly_all_in_inr` for hotels. Never emit a single blended
+   figure, and never drop the `nightly_` prefix: it is load-bearing (BUG-16). This is a
+   correctness rule, not a style preference — see §5.
 6. **Prefer a clear error to an empty result.** Almost every failure on this site is a silent
    HTTP 200. Converting those into sentences a person can act on is the whole point of the
    server.
-7. **Undocumented endpoints.** MakeMyTrip's terms do not invite automated access. Do not
-   publish this to any registry or package index. Keep the note in the README.
+7. **Undocumented endpoints.** MakeMyTrip's terms do not invite automated access. The
+   project is MIT-licensed and public as of 2026-09-06, so the safeguard is no longer
+   "don't share it" - it is that the politeness rules in item 4 stay enforced in code and
+   are review criteria for every contribution. Keep the Licence and Unofficial notes in the
+   README accurate.
 
 ---
 
@@ -146,8 +151,13 @@ is the fallback.
 
 ## 5. Domain rules that are easy to get wrong
 
-**Hotel prices are stay totals**, for the whole date range and room count — not per night.
-Divide before comparing properties with different stay lengths.
+**Hotel prices are per night**, for the room count searched — *not* stay totals. They were
+documented as stay totals until 2026-09-05, when varying the stay length on a pinned property
+settled it: Baga Beach Hotel returns 2,493 for one night and 2,493 for six (BUG-16). The
+fields carry the unit — `nightly_base_inr`, `nightly_tax_inr`, `nightly_all_in_inr` — and
+`stay_estimate_all_in_inr` is `nightly x nights`, an **estimate**, because MakeMyTrip quotes
+one representative nightly rate for a range rather than a per-date breakdown. Multiply before
+comparing against a whole-trip budget; do not divide.
 
 **`TOTAL_AMOUNT` in the detail page payload is base only.** All-in is `BASE_FARE + TAXES`.
 A field named "total" that is not the total; reading it as final under-reports by ~18%.

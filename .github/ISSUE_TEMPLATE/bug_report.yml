@@ -1,0 +1,57 @@
+name: Bug report
+description: Something returns a wrong number, fails, or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Run `python tools/doctor.py` first — most setup problems name their own fix.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you asked for, and what came back.
+      placeholder: |
+        Asked mmt_intercity_options for Bengaluru -> Goa on 2026-12-16.
+        The cab option showed a per-km rate that looked far too high.
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations: { required: true }
+  - type: textarea
+    id: calls
+    attributes:
+      label: Relevant lines from the call log
+      description: |
+        `~/.makemytrip-mcp/diagnostics/calls.jsonl` records every tool call with its
+        arguments and result — it is usually enough to diagnose a pricing bug outright.
+        **Read what you paste**: it contains your searches, dates and destinations.
+      render: json
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The `version` and `loaded_at_commit` from `mmt_version`.
+    validations: { required: true }
+  - type: dropdown
+    id: os
+    attributes:
+      label: Platform
+      options: [Windows, macOS, Other]
+    validations: { required: true }
+  - type: input
+    id: host
+    attributes:
+      label: MCP host
+      placeholder: Claude Desktop 1.x / Claude Code / other
+  - type: checkboxes
+    id: preconditions
+    attributes:
+      label: Before filing
+      options:
+        - label: "`python tools/doctor.py` passes, or I have pasted its output above"
+          required: true
+        - label: I am on a residential connection (a VPN or cloud host gets HTTP 403 by design)
+          required: true

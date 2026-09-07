@@ -1,0 +1,61 @@
+{
+  "device_id": "00000000-0000-0000-0000-000000000000",
+  "cab_places": {
+    "goa": {
+      "address": "Goa beach, Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_city": false,
+      "secondary_text": "Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_airport": false,
+      "main_text": "Goa beach",
+      "place_id": "ChIJ6dgmPADBvzsRw231CmbGUKk"
+    },
+    "panaji": {
+      "address": "Panaji, Goa, India",
+      "is_city": true,
+      "secondary_text": "Goa, India",
+      "is_airport": false,
+      "main_text": "Panaji",
+      "place_id": "ChIJ2cxhM6nAvzsRYb7lJAsSmN0"
+    },
+    "bengaluru": {
+      "address": "Bengaluru, Karnataka, India",
+      "is_city": true,
+      "secondary_text": "Karnataka, India",
+      "is_airport": false,
+      "main_text": "Bengaluru",
+      "place_id": "ChIJbU60yXAWrjsR4E9-UejD3_g"
+    },
+    "goaairport": {
+      "address": "Dabolim Airport, Madgaon, Goa, India",
+      "is_city": false,
+      "secondary_text": "Madgaon, Goa, India",
+      "is_airport": false,
+      "main_text": "Dabolim Airport",
+      "place_id": "ChIJbdsIfAC5vzsRN8CnIj9lBMM"
+    },
+    "calangute": {
+      "address": "Goa beach, Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_city": false,
+      "secondary_text": "Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_airport": false,
+      "main_text": "Goa beach",
+      "place_id": "ChIJ6dgmPADBvzsRw231CmbGUKk"
+    },
+    "palolem": {
+      "address": "Bibhitaki Hostel Palolem Goa, near Masjid, Mohanbagh, Palolem, Canacona, Goa, India",
+      "is_city": false,
+      "secondary_text": "near Masjid, Mohanbagh, Palolem, Canacona, Goa, India",
+      "is_airport": false,
+      "main_text": "Bibhitaki Hostel Palolem Goa",
+      "place_id": "ChIJoSw0ElxFvjsR4MdV86xxAV4"
+    },
+    "mollem": {
+      "address": "Biodiversity Park, Mollem Goa, National Highway 748, Mollem, Goa, India",
+      "is_city": false,
+      "secondary_text": "National Highway 748, Mollem, Goa, India",
+      "is_airport": false,
+      "main_text": "Biodiversity Park, Mollem Goa",
+      "place_id": "ChIJgRxLwR4HvzsRLLg5CxlKB4M"
+    }
+  }
+}

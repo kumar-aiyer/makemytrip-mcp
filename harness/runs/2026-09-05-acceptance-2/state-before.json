@@ -1,0 +1,37 @@
+{
+  "device_id": "00000000-0000-0000-0000-000000000000",
+  "cab_places": {
+    "goa": {
+      "address": "Goa beach, Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_city": false,
+      "secondary_text": "Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_airport": false,
+      "main_text": "Goa beach",
+      "place_id": "ChIJ6dgmPADBvzsRw231CmbGUKk"
+    },
+    "panaji": {
+      "address": "Panaji, Goa, India",
+      "is_city": true,
+      "secondary_text": "Goa, India",
+      "is_airport": false,
+      "main_text": "Panaji",
+      "place_id": "ChIJ2cxhM6nAvzsRYb7lJAsSmN0"
+    },
+    "bengaluru": {
+      "address": "Bengaluru, Karnataka, India",
+      "is_city": true,
+      "secondary_text": "Karnataka, India",
+      "is_airport": false,
+      "main_text": "Bengaluru",
+      "place_id": "ChIJbU60yXAWrjsR4E9-UejD3_g"
+    },
+    "kulem": {
+      "address": "Dudhsagar Waterfall Trip - Goa, Dudhsagar falls, Kulem, Goa, India",
+      "is_city": false,
+      "secondary_text": "Dudhsagar falls, Kulem, Goa, India",
+      "is_airport": false,
+      "main_text": "Dudhsagar Waterfall Trip - Goa",
+      "place_id": "ChIJo-qKFB7qvzsRoiU9cAzy4Qw"
+    }
+  }
+}

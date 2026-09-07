@@ -64,8 +64,9 @@ confirm or refute each with evidence from the repo or from a tool call, and say 
    plan only ever names outbound calls on 2026-12-15. Nothing prices the return on the 21st.
    Is that deliberate, and if not, what should the gates require?
 
-4. **Per-adult versus total.** Flight fares are per adult; hotel figures are stay totals for
-   the whole range; cab quotes are per vehicle. The audit has C5 ("per-person vs total
+4. **Per-adult versus total.** Flight fares are per adult; hotel figures are **per night**
+   (this document originally said "stay totals for the whole range" - wrong, corrected
+   2026-09-05 by BUG-16); cab quotes are per vehicle. The audit has C5 ("per-person vs total
    clearly distinguished") but no gate that checks the *arithmetic* of combining them. That
    is the single most likely place for a wrong grand total. Propose a gate.
 

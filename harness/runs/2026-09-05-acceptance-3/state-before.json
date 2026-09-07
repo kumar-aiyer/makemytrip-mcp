@@ -1,0 +1,69 @@
+{
+  "device_id": "00000000-0000-0000-0000-000000000000",
+  "cab_places": {
+    "goa": {
+      "address": "Goa beach, Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_city": false,
+      "secondary_text": "Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_airport": false,
+      "main_text": "Goa beach",
+      "place_id": "ChIJ6dgmPADBvzsRw231CmbGUKk"
+    },
+    "panaji": {
+      "address": "Panaji, Goa, India",
+      "is_city": true,
+      "secondary_text": "Goa, India",
+      "is_airport": false,
+      "main_text": "Panaji",
+      "place_id": "ChIJ2cxhM6nAvzsRYb7lJAsSmN0"
+    },
+    "bengaluru": {
+      "address": "Bengaluru, Karnataka, India",
+      "is_city": true,
+      "secondary_text": "Karnataka, India",
+      "is_airport": false,
+      "main_text": "Bengaluru",
+      "place_id": "ChIJbU60yXAWrjsR4E9-UejD3_g"
+    },
+    "goaairport": {
+      "address": "Dabolim Airport, Madgaon, Goa, India",
+      "is_city": false,
+      "secondary_text": "Madgaon, Goa, India",
+      "is_airport": false,
+      "main_text": "Dabolim Airport",
+      "place_id": "ChIJbdsIfAC5vzsRN8CnIj9lBMM"
+    },
+    "northgoa": {
+      "address": "Goa beach, Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_city": false,
+      "secondary_text": "Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_airport": false,
+      "main_text": "Goa beach",
+      "place_id": "ChIJ6dgmPADBvzsRw231CmbGUKk"
+    },
+    "southgoa": {
+      "address": "Bibhitaki Hostel Palolem Goa, near Masjid, Mohanbagh, Palolem, Canacona, Goa, India",
+      "is_city": false,
+      "secondary_text": "near Masjid, Mohanbagh, Palolem, Canacona, Goa, India",
+      "is_airport": false,
+      "main_text": "Bibhitaki Hostel Palolem Goa",
+      "place_id": "ChIJoSw0ElxFvjsR4MdV86xxAV4"
+    },
+    "dudhsagar": {
+      "address": "Dudhsagar Trek, Road, Molem, Kolem, Goa, India",
+      "is_city": false,
+      "secondary_text": "Road, Molem, Kolem, Goa, India",
+      "is_airport": false,
+      "main_text": "Dudhsagar Trek",
+      "place_id": "ChIJxWknsiAHvzsRJLQ-TAVWxjY"
+    },
+    "ponda": {
+      "address": "Sahakar Spice Plantation Curti Ponda Road Goa, Curti, Ponda, Goa, India",
+      "is_city": false,
+      "secondary_text": "Curti, Ponda, Goa, India",
+      "is_airport": false,
+      "main_text": "Sahakar Spice Plantation Curti Ponda Road Goa",
+      "place_id": "ChIJIfrd1cu6vzsRPtyAgtAnIVY"
+    }
+  }
+}

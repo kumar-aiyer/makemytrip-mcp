@@ -1,0 +1,3 @@
+[{"tool":"mmt_version","args":{},"timeout":60},
+ {"tool":"mmt_capabilities","args":{},"timeout":60},
+ {"tool":"mmt_setup_status","args":{},"timeout":180}]

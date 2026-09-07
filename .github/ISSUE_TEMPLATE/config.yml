@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/kumar-aiyer/makemytrip-mcp/security/advisories/new
+    about: Report privately. Please do not open a public issue.
+  - name: Installation trouble
+    url: https://github.com/kumar-aiyer/makemytrip-mcp/blob/main/docs/INSTALL.md
+    about: Run `python tools/doctor.py` first - it names the exact fix for most setup problems.

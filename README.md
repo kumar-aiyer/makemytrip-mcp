@@ -1,5 +1,9 @@
 # makemytrip-mcp
 
+[![tests](https://github.com/kumar-aiyer/makemytrip-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/kumar-aiyer/makemytrip-mcp/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+
 An MCP server that prices Indian travel — **hotels, flights, trains and outstation cabs** —
 from MakeMyTrip, so costing a trip is a question you ask rather than a browser session you
 drive.
@@ -7,23 +11,31 @@ drive.
 Runs anywhere that speaks MCP over stdio: **Claude Cowork** (as a plugin), **OpenClaw**,
 **Claude Code**, or the Claude desktop app.
 
-> **Read-only by design.** There is no booking, cart, payment or login path in this program,
-> and none should be added. Every figure is a signed-out guest rate — a benchmark, not a
-> reservation.
+> **For one person planning a trip, on their own desktop.** It exists to help with India
+> travel planning and nothing else.
+>
+> **Read-only by design.** There is no booking, cart, payment, login or account path in this
+> program, and none will be added. Every figure is a signed-out guest rate — a benchmark, not
+> a reservation.
+>
+> It needs a **headed browser on a residential connection**, which is also why it is a
+> desktop tool rather than a service: MakeMyTrip's CDN answers datacenter IPs with HTTP 403,
+> so a server deployment does not work even if you attempt one.
 
 ## What it gives you
 
 | Tool | What it answers |
 |---|---|
 | `mmt_capabilities` | What can be priced, what the booking windows are, current health |
-| `mmt_hotel_search` | City + dates → priced list, base/tax/all-in, per-night derived |
+| `mmt_hotel_search` | City + dates → priced list, base/tax/all-in **per night**, plus a `nights x nightly` stay estimate |
 | `mmt_find_hotel_id` | Property name → MakeMyTrip hotelId |
 | `mmt_hotel_rates` | One property → every room type and rate plan, with meal plan and cancellation |
 | `mmt_price_itinerary` | A multi-stop trip → per-leg table **and a total summed server-side** |
-| `mmt_flight_search` | Route + date → fares per adult, base/tax apart *(slow — see note below)* |
-| `mmt_train_search` | Route + date → trains with live per-class waitlist status, fare, confirmation odds |
+| `mmt_flight_search` | *Internal.* Route + date → fares per adult, base/tax apart *(slow — see note below)*. **Not listed to callers** — reached through `mmt_intercity_options` |
+| `mmt_train_search` | *Internal.* Trains with live per-class status and fare; outside the 60-day window it also quotes the furthest bookable date as an **indicative** fare. **Not listed to callers** |
 | `mmt_station_city` | Station codes → city codes, tying a rail leg to its hotel |
-| `mmt_cab_quote` | Two places + date → every vehicle class, base/tax/all-in **and per-km**; optional `return_date` for round trips |
+| `mmt_cab_quote` | *Internal.* Two places + date → every vehicle class, base/tax/all-in. **Not listed to callers** |
+| `mmt_intercity_options` | **The interface for pricing a journey.** One leg by **flight, train and cab at once**, normalised to a party total with the source unit kept visible; marks options that are dearer *and* slower as `dominated` and leaves the choice to you |
 | `mmt_cab_find_place` | Register a cab location by name (drives the site's own form) |
 | `mmt_cab_add_place` | Register one from a pasted URL — the reliable manual path |
 | `mmt_selftest` | Live check of what still works, and which tier the router is using |
@@ -121,9 +133,33 @@ crash, so code edits behind a stable tool surface need no MCP reconnect. See
 The offline suite asserts on **structure and arithmetic** (`base + tax == all_in`), never on
 particular prices — those drift daily.
 
-## Legal
+## Licence
 
-Unofficial. These are undocumented internal endpoints and MakeMyTrip's terms do not invite
-automated access. Personal, low-volume, read-only use: request volume stays at roughly what a
-person browsing would generate, with one stable device id and no scheduled polling. Don't
-redistribute it, and stop if MakeMyTrip signals otherwise.
+[MIT](LICENSE). Copyright (c) 2026 Kumar Aiyer.
+
+## Intended use, and what the licence does not say
+
+This is built for **individual desktop use, to help plan travel in India**. Not a booking
+tool, not a service, not a data pipeline.
+
+MIT is a permissive licence: legally it lets you do almost anything, and it does **not**
+restrict use to the scope above. That paragraph is the author's intent and the shape the
+software is actually built for — not a term you are agreeing to. Two practical limits back
+it up anyway: MakeMyTrip's CDN refuses datacenter IPs, so hosted use does not function, and
+there is no booking or payment path to abuse.
+
+## Unofficial, and the manners that go with it
+
+These are undocumented internal endpoints and MakeMyTrip's terms do not invite automated
+access. What keeps this defensible is behaving like a person browsing: request volume near
+what a human generates, one stable device id, no scheduled polling, no price-history
+harvesting, concurrency capped at 4, one retry maximum. Those are enforced in the code and
+they are review criteria for contributions — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+If MakeMyTrip signals that it would rather you did not, stop.
+
+## Contributing
+
+Pull requests are welcome and every one needs the maintainer's approval before it merges;
+see [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and
+[SECURITY.md](SECURITY.md).

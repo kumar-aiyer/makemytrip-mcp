@@ -1,0 +1,111 @@
+[
+  {
+    "tool": "mmt_cab_quote",
+    "args": {
+      "origin": "goa",
+      "dest": "kulem",
+      "date": "2026-12-19",
+      "trip_type": "RT",
+      "return_date": "2026-12-19"
+    },
+    "elapsed_s": 29.8,
+    "result": {
+      "route": "Goa beach -> Kulem",
+      "date": "2026-12-19",
+      "url": "https://www.makemytrip.com/cabs/listing?tripType=RT&departDate=19-12-2026&pickupTime=10%3A00&intlFlow=false&from=%7B%22address%22%3A%22Goa%20beach%2C%20Maddo%20Waddo%2C%20MADDO%20VADDO%2C%20Calangute%2C%20Goa%2C%20India%22%2C%22is_city%22%3Afalse%2C%22secondary_text%22%3A%22Maddo%20Waddo%2C%20MADDO%20VADDO%2C%20Calangute%2C%20Goa%2C%20India%22%2C%22is_airport%22%3Afalse%2C%22main_text%22%3A%22Goa%20beach%22%2C%22place_id%22%3A%22ChIJ6dgmPADBvzsRw231CmbGUKk%22%7D&to=%7B%22address%22%3A%22Kulem%2C%20Goa%2C%20India%22%2C%22is_city%22%3Atrue%2C%22secondary_text%22%3A%22Goa%2C%20India%22%2C%22is_airport%22%3Afalse%2C%22main_text%22%3A%22Kulem%22%2C%22place_id%22%3A%22ChIJU_8H2moHvzsRDqa5IZGjLk4%22%7D&returnDate=19-12-2026",
+      "distance_km": 40,
+      "approx_hours": 4,
+      "cab_count": 6,
+      "cabs": [
+        {
+          "car": "Dzire, Etios",
+          "category": "SEDAN",
+          "fuel": "DIESEL",
+          "seats": "4 Seats",
+          "vendor": "Eroovo",
+          "base_inr": 2050,
+          "tax_fees_inr": 95,
+          "all_in_inr": 2145,
+          "extra_per_km_inr": 30,
+          "all_in_per_km_inr": 53.62
+        },
+        {
+          "car": "Maruti Suzuki Swift",
+          "category": "HATCHBACK",
+          "fuel": "DIESEL",
+          "seats": "4 Seats",
+          "vendor": "Eroovo",
+          "base_inr": 2100,
+          "tax_fees_inr": 95,
+          "all_in_inr": 2195,
+          "extra_per_km_inr": 30,
+          "all_in_per_km_inr": 54.88
+        },
+        {
+          "car": "Xylo, Ertiga",
+          "category": "SUV",
+          "fuel": "DIESEL",
+          "seats": "6 Seats",
+          "vendor": "Eroovo",
+          "base_inr": 2499,
+          "tax_fees_inr": 95,
+          "all_in_inr": 2594,
+          "extra_per_km_inr": 30,
+          "all_in_per_km_inr": 64.85
+        },
+        {
+          "car": "Maruti Suzuki Ertiga",
+          "category": "SUV",
+          "fuel": "DIESEL",
+          "seats": "6 Seats",
+          "vendor": "Taxida",
+          "base_inr": 3742,
+          "tax_fees_inr": 95,
+          "all_in_inr": 3837,
+          "extra_per_km_inr": 48,
+          "all_in_per_km_inr": 95.92
+        },
+        {
+          "car": "Innova Crysta",
+          "category": "SUV",
+          "fuel": "DIESEL",
+          "seats": "6 Seats",
+          "vendor": "Eroovo",
+          "base_inr": 3900,
+          "tax_fees_inr": 95,
+          "all_in_inr": 3995,
+          "extra_per_km_inr": 40,
+          "all_in_per_km_inr": 99.88
+        },
+        {
+          "car": "Toyota Innova Hycross",
+          "category": "SUV",
+          "fuel": "DIESEL",
+          "seats": "6 Seats",
+          "vendor": "Eroovo",
+          "base_inr": 4500,
+          "tax_fees_inr": 95,
+          "all_in_inr": 4595,
+          "extra_per_km_inr": 50,
+          "all_in_per_km_inr": 114.88
+        }
+      ],
+      "cheapest": {
+        "car": "Dzire, Etios",
+        "category": "SEDAN",
+        "fuel": "DIESEL",
+        "seats": "4 Seats",
+        "vendor": "Eroovo",
+        "base_inr": 2050,
+        "tax_fees_inr": 95,
+        "all_in_inr": 2145,
+        "extra_per_km_inr": 30,
+        "all_in_per_km_inr": 53.62
+      },
+      "tier_used": 2,
+      "elapsed_ms": 11887,
+      "cached": false,
+      "fetched_at": "2026-09-05T10:10:53-0700"
+    }
+  }
+]

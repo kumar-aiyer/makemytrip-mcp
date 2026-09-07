@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 from . import config as C
+from . import dates as D
 from . import rsc
 from .errors import BadInput, EmptyValid, UnregisteredPlace
 from .fetch import get_text
@@ -43,7 +44,180 @@ ALIASES = {"cochin": "kochi", "rameshwaram": "rameswaram", "ernakulam": "kochi"}
 CAB_RE = re.compile(r'\{\s*"type"\s*:\s*"CAB"\s*,\s*"data"\s*:\s*\{')
 SUMMARY_RE = re.compile(r'"summaryText"\s*:\s*"([^"]+)"')
 DIST_RE = re.compile(r"\*?(\d[\d,]*)\s*Kms?\*?", re.I)
-TIME_RE = re.compile(r"\*?(\d+)\s*hr", re.I)
+# The hour figure is fractional on longer routes ("*11.5 hr(s)*"). Matching only
+# \d+ did not merely truncate it - the engine backtracked past "11." and matched the
+# "5" after the decimal point, so a 11.5 hour drive was reported as 5.
+TIME_RE = re.compile(r"\*?(\d+(?:\.\d+)?)\s*hr", re.I)
+
+
+# Tiers `harvest._place_from_captured` can match on, strongest first. Anything below
+# `segment_shortened` means the harvester never found a row whose *name* is the place
+# asked for - it settled for one that merely mentions it.
+STRONG_TIERS = ("exact", "exact_shortened", "segment", "segment_shortened")
+
+# Words that make a query a request for a specific venue rather than a locality. Asking
+# for "Dabolim Airport" and getting a POI is the correct answer, not a weak match.
+POI_WORDS = ("airport", "hotel", "hostel", "resort", "station", "park", "beach",
+             "falls", "trek", "plantation", "temple", "church", "basilica", "cathedral",
+             "chapel", "fort", "market", "museum", "palace", "jetty", "terminus")
+
+
+def place_candidates(name: str) -> list[str]:
+    """Names worth trying as a registered cab place, best first.
+
+    Each mode names places in its own domain: flights want an IATA code, trains a
+    station code, cabs a place harvested from MakeMyTrip's own autocomplete. A caller
+    pricing one leg across all three writes something like "Bengaluru" -> "GOI", and
+    the cab side then fails on 'GOI' even though 'goa' is registered. So a code is
+    also tried under the city names that map to it.
+    """
+    raw = (name or "").strip().lower()
+    out = [raw, ALIASES.get(raw, raw)]
+    code = raw.upper()
+    for table in (C.AIRPORTS, C.STATIONS):
+        for city, mapped in table.items():
+            if mapped.upper() == code:
+                out.append(city)
+    seen, uniq = set(), []
+    for n in out:
+        if n and n not in seen:
+            seen.add(n)
+            uniq.append(n)
+    return uniq
+
+
+def resolve_place_loose(name: str) -> tuple[dict[str, Any], str]:
+    """resolve_place, but also trying the city names a code maps to. Returns the place
+    and the name it matched under, so the caller can say which one it used."""
+    places = known_places()
+    for candidate in place_candidates(name):
+        if candidate in places:
+            return places[candidate], candidate
+    raise UnregisteredPlace(
+        f"no cab place object registered for {name!r}",
+        hint="Register it with mmt_cab_find_place, or pass a name that is already "
+             "known. Tried: " + ", ".join(place_candidates(name)),
+        details={"known_places": sorted(places)})
+
+
+def match_quality(place: dict[str, Any], query: str, tier: str) -> dict[str, Any]:
+    """Grade how well a harvested place answers the query. Pure.
+
+    BUG-17: the harvester returned the best row it could find and said nothing about how
+    good that was, so "Calangute Goa" registering as "Goa beach" and "Palolem Goa" as
+    "Bibhitaki Hostel Palolem Goa" looked identical to a clean hit. Two acceptance runs
+    priced real transfers between POIs registered under locality names.
+    """
+    q = (query or "").strip().lower()
+    main = str(place.get("main_text") or place.get("city") or "").strip()
+    is_city = bool(place.get("is_city"))
+    asked_for_venue = any(w in q for w in POI_WORDS)
+
+    if tier in STRONG_TIERS:
+        confidence = "high"
+    elif tier in ("regional", "prefix"):
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    out: dict[str, Any] = {
+        "tier": tier, "confidence": confidence, "query": query,
+        "resolved_to": main, "is_city": is_city,
+    }
+    # A locality query answered by a named venue is the failure worth naming, and it is
+    # not caught by confidence alone: a venue can match its own name exactly.
+    #
+    # But `is_city` alone is not that signal. MakeMyTrip marks plenty of real localities
+    # false - Palolem among them - and run 4 warned on "Palolem Goa" -> "Palolem", a
+    # perfect answer. A false warning is worse than none, because it is how the true
+    # ones get ignored. So a STRONG tier is trusted: the harvester found a row actually
+    # named what was asked for, whatever MakeMyTrip files it under.
+    if not is_city and not asked_for_venue and tier not in STRONG_TIERS:
+        out["confidence"] = "low" if confidence == "high" else confidence
+        out["warning"] = (
+            f"{query!r} resolved to {main!r}, which MakeMyTrip does not classify as a "
+            f"city (is_city false). Cab fares will be quoted to that exact point, not to "
+            f"the locality. Check it is where you meant, or register the place from a "
+            f"listing URL with mmt_cab_add_place.")
+    elif confidence != "high":
+        out["warning"] = (
+            f"{query!r} matched {main!r} only on a weak tier ({tier}); the harvester "
+            f"found no row actually named that. Verify before pricing against it.")
+    return out
+
+
+def validate_trip(iso_date: str, trip_type: str, return_date: str) -> None:
+    """Reject trip shapes MakeMyTrip cannot actually price. Pure; raises BadInput.
+
+    A round trip whose return is the departure day is the trap. MakeMyTrip does not
+    refuse it - it answers with the ONE-WAY listing, the same vendors at the same
+    fares, while the URL still says tripType=RT. Measured 2026-09-05 on
+    goa->kulem: OW and same-day RT returned an identical 6 cabs, cheapest 2145 both
+    times, where the same flag on bengaluru->goa (a real multi-day return) moved the
+    cheapest fare 12,161 -> 20,264. Passing that back as a round-trip quote is a wrong
+    number wearing a right label, so it is refused here instead.
+    """
+    dep = D.not_past(iso_date, "date")
+    if trip_type not in ("OW", "RT"):
+        raise BadInput(f"trip_type must be OW or RT, not {trip_type!r}.")
+    if trip_type != "RT":
+        return
+    if not return_date:
+        raise BadInput("trip_type RT requires a return_date.")
+    try:
+        ret = date.fromisoformat(return_date)
+    except ValueError:
+        raise BadInput("return_date must be ISO YYYY-MM-DD") from None
+    if ret <= dep:
+        raise BadInput(
+            f"return_date {return_date} must be after the departure date {iso_date}. "
+            f"MakeMyTrip prices a same-day round trip as a one-way and returns the "
+            f"one-way fares under a tripType=RT url.",
+            hint="For an out-and-back on one day, quote it as OW - that is what the "
+                 "same-day RT fares actually are.")
+
+
+# BUG-21. MakeMyTrip answers a short outstation search with its standard local-hire
+# package rather than the real route: acceptance run 7 got "40 Kms / 4 hr" for every
+# intra-Goa leg, whether the endpoints were 15 km apart or 70. The packages are sold as
+# 4hr/40km, 8hr/80km and so on - exactly 10 km per hour and a multiple of 40 - which is
+# what makes them recognisable. A real route almost never lands on that ratio: 603 km in
+# 11.5 h is 52 km/h, 438 km in 10 h is 44.
+#
+# The distance itself is reported either way, because it is what MakeMyTrip said. What
+# must not survive is `all_in_per_km_inr` derived from it - a per-km rate computed
+# against a package bucket is a made-up number, and it is the kind that looks fine.
+PACKAGE_KMPH = 10.0
+PACKAGE_STEP_KM = 40
+
+
+def is_package_bucket(distance_km, hours) -> bool:
+    """Whether a distance/duration pair is a local-hire package rather than a route."""
+    try:
+        km, hrs = float(distance_km), float(hours)
+    except (TypeError, ValueError):
+        return False
+    if km <= 0 or hrs <= 0:
+        return False
+    return (abs(km / hrs - PACKAGE_KMPH) < 0.01
+            and abs(km % PACKAGE_STEP_KM) < 0.01)
+
+
+def parse_summary(summary: str) -> tuple[int | None, float | None]:
+    """Distance in km and approximate hours out of a SEARCH_SUMMARY summaryText.
+
+    Live shape: `Rates for *603 Kms* approx distance | *11.5 hr(s)* approx time`.
+    Hours come back as an int when whole so the common case stays 10 rather than 10.0.
+    """
+    km = DIST_RE.search(summary or "")
+    hrs = TIME_RE.search(summary or "")
+    distance = int(km.group(1).replace(",", "")) if km else None
+    hours: float | None = None
+    if hrs:
+        hours = float(hrs.group(1))
+        if hours.is_integer():
+            hours = int(hours)
+    return distance, hours
 
 
 def known_places() -> dict[str, dict[str, Any]]:
@@ -137,15 +311,14 @@ def listing_url(origin: dict, dest: dict, iso_date: str, *, pickup_time: str = "
 async def search(origin: str | dict, dest: str | dict, iso_date: str, *,
                  pickup_time: str = "10:00", trip_type: str = "OW",
                  return_date: str = "", fresh: bool = False) -> dict[str, Any]:
+    validate_trip(iso_date, trip_type, return_date)
     o = origin if isinstance(origin, dict) else resolve_place(origin)
     d = dest if isinstance(dest, dict) else resolve_place(dest)
     url = listing_url(o, d, iso_date, pickup_time=pickup_time, trip_type=trip_type,
                       return_date=return_date)
-    if trip_type == "RT" and not return_date:
-        raise BadInput("trip_type RT requires a return_date.")
 
     # funnel_url: /cabs/listing is Akamai-stubbed for a browser that arrives cold.
-    res = await get_text(url, ec=CAB_PAGE, wait_for="networkidle", fresh=fresh,
+    res = await get_text(url, ec=CAB_PAGE, wait_for="domcontentloaded", fresh=fresh,
                          funnel_url=C.CAB_HOME, validate=body_valid)
     out = parse(res.text, url=url, iso_date=iso_date,
                 route=f"{place_label(o)} -> {place_label(d)}")
@@ -189,20 +362,26 @@ def parse(html: str, *, url: str = "", iso_date: str = "",
         })
 
     sm = SUMMARY_RE.search(blob)
-    summary = sm.group(1) if sm else ""
-    km = DIST_RE.search(summary)
-    hrs = TIME_RE.search(summary)
-    distance = int(km.group(1).replace(",", "")) if km else None
+    distance, hours = parse_summary(sm.group(1) if sm else "")
+    bucket = is_package_bucket(distance, hours)
 
     for c in cabs:
-        if distance and isinstance(c.get("all_in_inr"), (int, float)):
+        # No per-km figure off a package bucket - see is_package_bucket.
+        if distance and not bucket and isinstance(c.get("all_in_inr"), (int, float)):
             c["all_in_per_km_inr"] = round(c["all_in_inr"] / distance, 2)
     cabs.sort(key=lambda c: (c["all_in_inr"] is None, c["all_in_inr"] or 0))
 
     return {
         "route": route, "date": iso_date, "url": url,
         "distance_km": distance,
-        "approx_hours": int(hrs.group(1)) if hrs else None,
+        "approx_hours": hours,
+        "distance_basis": "package_bucket" if bucket else "route",
+        **({"distance_note":
+            f"MakeMyTrip answered with its standard {distance} km / {hours} hr local "
+            f"hire package, not the distance between these two points. Treat "
+            f"distance_km and approx_hours as the package, and note that no "
+            f"all_in_per_km_inr is given - it would be derived from a bucket."}
+           if bucket else {}),
         "cab_count": len(cabs), "cabs": cabs,
         "cheapest": cabs[0] if cabs else None,
     }

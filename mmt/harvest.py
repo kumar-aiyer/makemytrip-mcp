@@ -39,7 +39,8 @@ async def _dismiss_popups(page) -> None:
                 await page.wait_for_timeout(600)
 
 
-async def harvest_place(query: str, *, timeout_ms: int = 25_000) -> dict[str, Any]:
+async def harvest_place(query: str, *,
+                        timeout_ms: int = 25_000) -> tuple[dict[str, Any], str]:
     """Drive the cab search form to capture a full place object for `query`."""
     captured: list[dict] = []
 
@@ -79,14 +80,17 @@ async def harvest_place(query: str, *, timeout_ms: int = 25_000) -> dict[str, An
 
         url_now = page.url
 
-    place = _place_from_captured(captured, query) or _place_from_url(url_now)
+    place, match_tier = _place_from_captured(captured, query)
+    if place is None:
+        place = _place_from_url(url_now)
+        match_tier = "from_url" if place else "none"
     if not place:
         raise BadInput(
             f"Could not capture a place object for {query!r}.",
             hint="Search that route once on makemytrip.com/cabs and paste the listing "
                  "URL into mmt_cab_add_place instead - the manual path always works.",
             details={"page_url": url_now})
-    return place
+    return place, match_tier
 
 
 async def _click_best_suggestion(page, query: str) -> None:
@@ -114,36 +118,87 @@ async def _click_best_suggestion(page, query: str) -> None:
             await items.nth(best_idx).click(timeout=4000)
 
 
-def _place_from_captured(bodies: list[dict], query: str) -> dict[str, Any] | None:
-    """Pick the best place object, preferring regional relevance over prefix luck.
+# Words that only say where something is. A one-word variant made of nothing but these
+# would match a region rather than the place asked for, so it is not tried alone.
+REGION_WORDS = frozenset({"goa", "india", "karnataka", "kerala", "maharashtra",
+                          "tamil", "nadu", "north", "south", "east", "west"})
 
-    Priority: exact name == query, then first-segment == query, then places whose
-    secondary_text contains the query (they are IN the region - e.g. "Panaji"
-    with secondary "Goa, India" for query "goa"), then first-segment startswith,
-    then substring, then the first place seen. This stops "goa" matching
-    "Goalpara, Assam" (prefix luck) when a place actually in Goa exists.
+
+def _query_variants(query: str) -> list[str]:
+    """Every contiguous run of words in the query, longest first.
+
+    BUG-17: a caller writes "Palolem Goa", appending the region - which defeats the
+    exact/segment tiers, because the locality row is just "Palolem", and the phrase then
+    matches by substring against "Bibhitaki Hostel Palolem Goa", so a hostel wins.
+    Trying shorter *leading* phrases fixed that. It did not fix the mirror image:
+    "Goa Dabolim Airport" puts the region first, so no leading phrase is ever the place
+    name and the query falls through to `fallback` - twice in seven acceptance runs, each
+    time costing a wasted 20-second lookup before the caller rephrased.
+
+    Contiguous windows cover both: "goa dabolim airport" yields "dabolim airport", which
+    matches on a strong tier. Single words made only of region words are skipped, so
+    "goa" alone never stands in for the place someone asked about.
+    """
+    words = query.strip().lower().split()
+    if not words:
+        return [""]
+    out: list[str] = []
+    for size in range(len(words), 0, -1):
+        for start in range(0, len(words) - size + 1):
+            window = words[start:start + size]
+            if size == 1 and window[0] in REGION_WORDS:
+                continue
+            phrase = " ".join(window)
+            if phrase not in out:
+                out.append(phrase)
+    return out or [" ".join(words)]
+
+
+def _place_from_captured(bodies: list[dict], query: str) -> tuple[dict[str, Any] | None, str]:
+    """Pick the best place object and say how strongly it matched.
+
+    Priority: exact name == query, then first-segment == query - both tried against the
+    full query and then against shorter leading phrases - then places whose
+    secondary_text contains the query (they are IN the region, e.g. "Panaji" with
+    secondary "Goa, India" for query "goa"), then first-segment startswith, then
+    substring, then the first place seen. This stops "goa" matching "Goalpara, Assam"
+    (prefix luck) when a place actually in Goa exists.
+
+    Returns (place, tier). The tier is what `cabs.match_quality` grades: everything
+    below `segment` is a guess and the caller is told so.
     """
     q = query.strip().lower()
-    exact = seg = regional = prefix = substr = best = None
-    for body in bodies:
-        for node in _walk(body):
-            if not isinstance(node, dict) or not node.get("place_id"):
-                continue
-            name = str(node.get("city") or node.get("main_text") or "").lower()
-            first = name.split(",")[0].strip()
-            secondary = str(node.get("secondary_text") or "").lower()
-            if name == q:
-                exact = exact or node
-            elif first == q:
-                seg = seg or node
-            elif q in secondary:
-                regional = regional or node
-            elif first.startswith(q):
-                prefix = prefix or node
-            elif q in name:
-                substr = substr or node
-            best = best or node
-    return exact or seg or regional or prefix or substr or best
+    nodes = [n for body in bodies for n in _walk(body)
+             if isinstance(n, dict) and n.get("place_id")]
+
+    def parts(node):
+        name = str(node.get("city") or node.get("main_text") or "").lower()
+        return name, name.split(",")[0].strip(), str(node.get("secondary_text") or "").lower()
+
+    # Strong tiers, tried against the full query first and then shorter phrases.
+    for variant in _query_variants(q):
+        for node in nodes:
+            if parts(node)[0] == variant:
+                return node, "exact" if variant == q else "exact_shortened"
+        for node in nodes:
+            if parts(node)[1] == variant:
+                return node, "segment" if variant == q else "segment_shortened"
+
+    # Weak tiers, full query only - these are the ones worth warning about.
+    regional = prefix = substr = None
+    for node in nodes:
+        name, first, secondary = parts(node)
+        if q in secondary:
+            regional = regional or node
+        elif first.startswith(q):
+            prefix = prefix or node
+        elif q in name:
+            substr = substr or node
+    hit = regional or prefix or substr
+    if hit is not None:
+        return hit, ("regional" if hit is regional
+                     else "prefix" if hit is prefix else "substring")
+    return (nodes[0], "fallback") if nodes else (None, "none")
 
 
 def _place_from_url(url: str) -> dict[str, Any] | None:
@@ -169,6 +224,32 @@ def _walk(obj: Any):
     elif isinstance(obj, list):
         for v in obj:
             yield from _walk(v)
+
+
+# BUG-20. The flight harvester used to wait out its whole 90-second deadline and then
+# return whatever it had - usually nothing - which the parser reported as `empty_valid`:
+# "no itineraries". Four of five searches in acceptance run 5 failed that way, ~99 s each.
+# Two things were wrong with that. A search that has produced no stream at all after half
+# a minute is not going to; and "no itineraries on this route" is a different claim from
+# "the page never opened a stream", which is a block. Saying the second quickly is worth
+# more than saying the first slowly and wrongly.
+STREAM_GRACE_S = 30.0     # no bytes at all by here means the funnel did not take
+STALL_POLLS = 3           # ~7.5 s without growth means the stream has finished
+ENOUGH_BYTES = 20_000     # a full result set; stop early and get on with it
+
+
+def stream_verdict(*, waited_s: float, best_len: int, stalled_polls: int,
+                   grace_s: float = STREAM_GRACE_S,
+                   stall_polls: int = STALL_POLLS,
+                   enough: int = ENOUGH_BYTES) -> str:
+    """continue | done | blocked. Pure, so the timing rules are testable."""
+    if best_len >= enough:
+        return "done"
+    if best_len and stalled_polls >= stall_polls:
+        return "done"
+    if not best_len and waited_s >= grace_s:
+        return "blocked"
+    return "continue"
 
 
 async def harvest_flight_search(origin: str, dest: str, iso_date: str, *,
@@ -207,6 +288,8 @@ async def harvest_flight_search(origin: str, dest: str, iso_date: str, *,
         done: set[int] = set()
         deadline = timeout_ms / 1000.0
         waited = 0.0
+        stalled = 0
+        refunnelled = False
         while waited < deadline:
             try:
                 await page.wait_for_timeout(2500)
@@ -222,6 +305,7 @@ async def harvest_flight_search(origin: str, dest: str, iso_date: str, *,
                          "happening, mmt_setup_status will say whether the browser is "
                          "healthy.") from None
             waited += 2.5
+            grew = False
             for resp in list(responses):
                 # Awaiting the same response twice spawns a second waiter that
                 # outlives the page and logs a stray "Target closed".
@@ -229,10 +313,39 @@ async def harvest_flight_search(origin: str, dest: str, iso_date: str, *,
                     continue
                 done.add(id(resp))
                 with contextlib.suppress(Exception):
-                    await resp.finished()
                     body = await resp.text()
                     if len(body) > len(best):
                         best = body
-            if len(best) > 20_000:
+                        grew = True
+            stalled = 0 if grew else stalled + 1
+
+            verdict = stream_verdict(waited_s=waited, best_len=len(best),
+                                     stalled_polls=stalled)
+            if verdict == "done":
                 break
+            if verdict == "blocked":
+                if not refunnelled:
+                    # One re-visit of the funnel inside this call, rather than making
+                    # the caller spend another search on it. The funnel not taking is
+                    # the known cause (findings.md, the Akamai 200-ok stub), and
+                    # re-navigating costs ~10 s against the ~90 s of grinding it
+                    # replaces - and against a whole extra tool call for the caller.
+                    refunnelled = True
+                    stalled = 0
+                    await page.goto(C.WWW + "/flights/?cc=IN&lang=eng",
+                                    wait_until="domcontentloaded", timeout=timeout_ms)
+                    await page.wait_for_timeout(4000)
+                    await _dismiss_popups(page)
+                    await page.goto(url, wait_until="domcontentloaded",
+                                    timeout=timeout_ms)
+                    waited += 10.0
+                    continue
+                raise Blocked(
+                    f"The flight results page produced no search stream in "
+                    f"{waited:.0f}s, across two attempts at the funnel.",
+                    hint="This is a block, not an empty route - MakeMyTrip served the "
+                         "page without its data stream. Retry once; if it persists, "
+                         "mmt_setup_status will say whether the browser is healthy.",
+                    details={"stream_responses_seen": len(responses),
+                             "refunnelled": True})
         return best

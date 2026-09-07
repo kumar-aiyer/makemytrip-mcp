@@ -1,0 +1,121 @@
+[
+  {
+    "tool": "mmt_version",
+    "args": {},
+    "elapsed_s": 0.0,
+    "result": {
+      "tool": "mmt_version",
+      "version": "1.0.0",
+      "loaded_at_commit": "8cef7cea75bfc007c12d17d116b2d4f3ab12eba2",
+      "loaded_dirty": true,
+      "code_path": "C:\\Users\\kumar\\projects\\claudecodeprojects\\makemytrip-mcp",
+      "mmt_module_dir": "C:\\Users\\kumar\\projects\\claudecodeprojects\\makemytrip-mcp\\mmt",
+      "python": "3.14.3",
+      "server_os": "nt",
+      "started_unix": 1788642788,
+      "uptime_s": 0
+    }
+  },
+  {
+    "tool": "mmt_capabilities",
+    "args": {},
+    "elapsed_s": 0.0,
+    "result": {
+      "version": {
+        "tool": "mmt_version",
+        "version": "1.0.0",
+        "loaded_at_commit": "8cef7cea75bfc007c12d17d116b2d4f3ab12eba2",
+        "loaded_dirty": true,
+        "code_path": "C:\\Users\\kumar\\projects\\claudecodeprojects\\makemytrip-mcp",
+        "mmt_module_dir": "C:\\Users\\kumar\\projects\\claudecodeprojects\\makemytrip-mcp\\mmt",
+        "python": "3.14.3",
+        "server_os": "nt",
+        "started_unix": 1788642788,
+        "uptime_s": 0
+      },
+      "verified": {
+        "hotel_search": "city plus dates to a priced list",
+        "hotel_rates": "one property to every room and rate plan",
+        "price_itinerary": "multi-stop total, summed server-side",
+        "train_search": "trains with live per-class availability",
+        "cab_quote": "outstation cabs by vehicle class",
+        "station_city": "station code to city code",
+        "flight_search": "fares per adult, base and tax apart, cheapest first - but SLOW (~30-60 s) and it answers with nearby airports as well as the one asked for"
+      },
+      "experimental": {
+        "cab_find_place": "drives the search form; falls back to a pasted URL"
+      },
+      "refuses": {
+        "cab_quote same-day RT": "trip_type RT with return_date == date is rejected: MakeMyTrip answers it with the ONE-WAY listing, so quoting it as a round trip would be a wrong number under a right label. Quote it as OW - that is what those fares are"
+      },
+      "booking_windows": {
+        "hotels": "none - any future date prices",
+        "cabs": "none on this endpoint; the ~60-day limit is only the website's date picker",
+        "flights": "none",
+        "trains": "Indian Railways opens reservations 60 days ahead; outside that MakeMyTrip returns an empty page with HTTP 200"
+      },
+      "pricing_conventions": {
+        "currency": "INR",
+        "hotels": "PER NIGHT (nightly_base_inr / nightly_tax_inr / nightly_all_in_inr). stay_estimate_all_in_inr is nightly x nights and is an ESTIMATE - MakeMyTrip quotes one representative nightly rate for a range, not a per-date breakdown. These were mislabelled as stay totals before 2026-09-05; anything you were trained on that says otherwise is out of date",
+        "flights": "per adult, one way, for the cabin searched",
+        "split": "base, tax and all-in are always reported separately"
+      },
+      "known_gaps": [
+        "A wrong city or station code returns an empty result, not an error.",
+        "Some properties are not sold on MakeMyTrip at all - absence is not the same as sold out.",
+        "Local 8hr/80km cab day packages use a different funnel and are not built. Price a substitute (a short outstation one-way) or say you subtracted it - do not leave local transport off an itinerary silently.",
+        "Hotel figures are per night. A stay line is nightly x nights and is an estimate: a range spanning a price change will not match it exactly.",
+        "Holiday packages are quoted per enquiry and are not searchable.",
+        "A flight search takes ~30-60 s: the API cannot be called directly, so the server drives the site's own search page. Ask for one route and date at a time rather than sweeping a month.",
+        "A flight search also returns nearby airports (a Goa search includes GOX and Sindhudurg). Itineraries not landing at the requested airport carry alternate_airport: true - do not quote them as fares into it.",
+        "Goa is two airports: GOI (South, Dabolim) and GOX (North, Mopa). Bare 'goa' means GOI."
+      ],
+      "cannot": {
+        "booking": "deliberately absent - this server has no booking, cart, payment or login path",
+        "member_rates": "requires a signed-in session, which this server never does"
+      },
+      "health": {},
+      "cache": {
+        "entries": 0,
+        "hits": 0,
+        "misses": 0,
+        "bytes": 0
+      }
+    }
+  },
+  {
+    "tool": "mmt_setup_status",
+    "args": {},
+    "elapsed_s": 16.9,
+    "result": {
+      "ready": true,
+      "playwright_installed": true,
+      "playwright_error": null,
+      "browser": "not started",
+      "running": false,
+      "warm": false,
+      "headless": false,
+      "cdp": false,
+      "user_agent": null,
+      "profile_dir": "C:\\Users\\kumar\\projects\\claudecodeprojects\\makemytrip-mcp\\.state\\chrome-profile",
+      "version": {
+        "tool": "mmt_version",
+        "version": "1.0.0",
+        "loaded_at_commit": "8cef7cea75bfc007c12d17d116b2d4f3ab12eba2",
+        "loaded_dirty": true,
+        "code_path": "C:\\Users\\kumar\\projects\\claudecodeprojects\\makemytrip-mcp",
+        "mmt_module_dir": "C:\\Users\\kumar\\projects\\claudecodeprojects\\makemytrip-mcp\\mmt",
+        "python": "3.14.3",
+        "server_os": "nt",
+        "started_unix": 1788642788,
+        "uptime_s": 17
+      },
+      "warmup": {
+        "ok": true,
+        "skipped": true
+      },
+      "next_steps": [],
+      "state_dir": "C:\\Users\\kumar\\projects\\claudecodeprojects\\makemytrip-mcp\\.state"
+    }
+  }
+]

@@ -59,10 +59,12 @@ def _ok(rid: Any, result: Any) -> dict:
 
 
 def tool_list() -> dict:
+    """Advertised tools. Hidden ones stay callable by name - probe.py and
+    mmt_intercity_options reach them directly - they are just not offered to a model."""
     return {"tools": [
         {"name": name, "description": spec["description"],
          "inputSchema": spec["schema"]}
-        for name, spec in sorted(T.TOOLS.items())
+        for name, spec in sorted(T.TOOLS.items()) if not spec.get("hidden")
     ]}
 
 

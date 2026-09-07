@@ -73,8 +73,11 @@ The model should:
   **return** via `trip_type="RT"` with `return_date` (C-RET). **Dudhsagar day trip:**
   research the route first (GR1), carry the discovered place name into
   `mmt_cab_find_place` (GR2/GR4), then quote `goa -> kulem`.
-- **Hotels**: `mmt_hotel_search("goa", "<run-date>", "<run-date>+6", 2)` gives stay totals;
-  per-night = total/6.
+- **Hotels**: `mmt_hotel_search("goa", "<run-date>", "<run-date>+6", 2)` gives **per-night**
+  rates (`nightly_all_in_inr`) plus `stay_estimate_all_in_inr` = nightly x nights. The stay
+  cost is the estimate, not the nightly figure. *(Corrected 2026-09-05 - BUG-16. This line
+  used to say "gives stay totals; per-night = total/6", which is backwards and is what the
+  first run followed.)*
 - **Local transport**: `mmt_capabilities.known_gaps` says 8hr/80km day packages are not
   built - the model **must price a substitute** (e.g., a short outstation OW Panaji leg) or
   subtract-and-say-so, and show a local-transport line rather than omitting it (H4 revised).
@@ -83,9 +86,10 @@ The model should:
   MakeMyTrip).
 - Price every line item; keep base/tax separate where MCP provided them; reconcile every
   subtotal to the grand total and per-person = total/2 (H-ARITH).
-- **Audit capture**: before ending the session, export the transcript to
-  `harness/runs/<date>/transcript.md` (Cline: History -> hover the session -> Export; or
-  copy manually) so H6 can be audited against the exported file, not the live chat.
+- **Audit capture**: H6 is scored against `.state/diagnostics/calls.jsonl`, which the
+  server writes itself - nothing to remember mid-run. Truncate it at pre-flight and copy it
+  to `harness/runs/<date>/calls.jsonl` at close-out. A host transcript export is still worth
+  keeping when the host produces one, but it is no longer what H6 depends on.
 
 ## Step 3 — Audit the transcript (the observer's checklist)
 
@@ -101,12 +105,14 @@ full checklist lives in `harness/prompts/goa-itinerary.md`. Summary:
   (or subtract-and-say-so) — an empty local-transport line fails.
 - H5 flight fares labeled per adult; no `alternate_airport` itinerary quoted as a
   fare into GOI (outbound and return).
-- H6 every MCP number traceable to the **exported transcript** tool call (spot-check 3).
+- H6 every MCP number traceable to a real tool call, via the server's own
+  `.state/diagnostics/calls.jsonl` and `tools/audit_calls.py --find <figure>`
+  (spot-check 3). Revised 2026-09-05; it used to read from the host's transcript export.
 - H7 fetched_at / staleness disclaimer on prices.
 - **H-ARITH (new):** every MCP-derived number reconciles to the grand total —
-  round-trip flights = (outbound + return) × 2 adults; hotel = the stay total the tool
-  returned, counted once; cab per-vehicle (split per head stated); per-person = grand
-  total ÷ 2; subtotals sum to the total.
+  round-trip flights = (outbound + return) × 2 adults; hotel = the tool's `nightly_all_in_inr` x nights, counted once (the tool's `stay_estimate_all_in_inr`) - NOT the nightly figure on its own;
+  cab per-vehicle (split per head stated); per-person = grand total ÷ 2; subtotals sum to
+  the total.
 
 **Mandatory gap-recovery gates (rewritten — see PHASE2-REVIEW.md claim 1):**
 - GR1 at least one web/research call **prompted by a blocked or incomplete MCP result**
@@ -154,7 +160,8 @@ for echoing old numbers.
 |---|---|---|
 | Flight BLR->GOI, per adult, one way | ₹4,367 (cheapest, 25 itineraries) | ₹3.6k-4.9k one-way; ₹7-9k round-trip low |
 | Return flight | not measured | ₹7.0-7.7k/adult typical December return |
-| Hotel Goa 6N | ₹2,493 (Baga Beach, budget floor); Hyatt Centric ₹13,342 | 3★ ₹3.5-5.5k/night, 4★ ₹7-12k/night |
+| Hotel Goa, per night | ₹2,493 (Baga Beach floor); Hyatt Centric ₹13,342 | 3★ ₹3.5-5.5k/night, 4★ ₹7-12k/night |
+| Hotel Goa 6N stay estimate | ₹14,958 (Baga Beach) to ₹80,052 (Hyatt Centric) | — |
 | Cab Bengaluru->Goa OW | ₹12,161 (cheapest of 10) | ₹10-25k for the leg |
 | 6N/7D trip for 2, total | — | **₹75-90k low / ₹1.15-1.35L mid / ₹1.75-2.1L high** |
 

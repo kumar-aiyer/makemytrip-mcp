@@ -88,8 +88,13 @@ response.cityLocationDetail        <- empty means the city code was wrong
 }
 ```
 
-`price` is base, `totalTax` is tax, `priceWithTax` is all-in. **Stay totals for the whole
-range and room count — not per night.**
+`price` is base, `totalTax` is tax, `priceWithTax` is all-in — surfaced as
+`nightly_base_inr`, `nightly_tax_inr`, `nightly_all_in_inr`. **These are PER NIGHT for the room count
+searched, not stay totals** (BUG-16, 2026-09-05: `priceWithTax` barely moves with the length
+of the range — Baga Beach Hotel answers 2,493 for one night and 2,493 for six). Tools add
+`stay_estimate_all_in_inr` = `nightly x nights`, an estimate: MakeMyTrip quotes one
+representative nightly rate per range, not a per-date breakdown. `totalAdditionalFees` is
+surfaced as `extra_fees_inr` with no unit prefix — its unit is not established.
 
 The body carries a fresh `requestId` (a uuid) per call, so it is **not** a usable cache key —
 keying on it gives every search its own entry and the cache never hits.

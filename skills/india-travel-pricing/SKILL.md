@@ -14,13 +14,47 @@ Always quote **base and tax separately, then the all-in figure**. MakeMyTrip dis
 apart and the all-in is roughly 18% above the headline; a single blended number is how
 budgets end up understated.
 
-Hotel prices are **stay totals for the whole date range**, not per night. Divide by nights
-before comparing properties with different stay lengths - the tools return
-`all_in_per_night_inr` for this.
+Hotel prices are **per night**, not stay totals for the range. Multiply by nights for a
+trip budget - the tools return `stay_estimate_all_in_inr` (`nightly x nights`) for this, and
+it is an **estimate**: MakeMyTrip quotes one representative nightly rate per range, not a
+per-date breakdown. The fields are `nightly_base_inr`, `nightly_tax_inr`, `nightly_all_in_inr`; the
+`nightly_` prefix is load-bearing. Anything that says "stay totals" or
+`all_in_per_night_inr` predates 2026-09-05 and is wrong.
+
+Rail options inside `mmt_intercity_options` are filtered to **air-conditioned classes**
+(1A/2A/3A/3E sleeper, CC/EC chair car) that run **within 1.25x the quickest train on the
+route**, and a **Vande Bharat is given a slot even when it costs more** than the sleeper
+beside it. The reasoning is that a nine-hour unreserved 2S seat is not a comparable to a
+flight, and a fare you would never actually book makes rail look cheaper than it is. What
+survives is marked `vande_bharat` and carries `avg_kmph` computed from the timetable rather
+than guessed from the name. `mmt_train_search` still returns the whole listing when called internally.
+
+A train date past the 60-day reservation window has no fare, and the train leg says so
+with `booking_opens`. It now also returns an `indicative` block: the same route on the
+furthest date Indian Railways prices today, picked on the same weekday so the same services
+run. Use it to compare rail against road and air - a Bengaluru-Goa sleeper at a few hundred
+rupees a head changes the shape of a budget - but never present it as the fare for the
+requested date. The block carries `quoted_for` and `requested_date` precisely so the two
+cannot be confused, and in `mmt_intercity_options` such rows are flagged `indicative` and are
+never allowed to make a bookable option look beaten.
+
+Price every journey between two places with `mmt_intercity_options` — it is the only such
+tool exposed. The single-mode searches still exist and it calls them, but they are no longer
+listed, because five of six acceptance runs that priced legs mode-by-mode left rail out of
+the itinerary entirely and mixed per-adult fares with per-vehicle ones. Modes that cannot
+apply are skipped, so a local transfer costs one cab quote and nothing more. Flights and trains are quoted per person and a
+cab per vehicle; mixing those units is the single most common way a trip total goes wrong,
+and the tool does that arithmetic once, keeping `unit` visible on every row. It marks an
+option `dominated` when another is both cheaper and faster - beyond that it does not
+recommend, because the trade-off depends on the whole itinerary. It also surfaces the train
+leg whether or not you would have thought to ask, which matters: outside the 60-day
+reservation window the honest answer is `not_in_window`, not silence.
 
 For a multi-stop trip use `mmt_price_itinerary` rather than looping `mmt_hotel_search`. It
-sums the legs it just fetched and returns the total in the same object, so the total cannot
-drift from the rows above it.
+multiplies each leg by its own nights and sums the legs it just fetched, returning
+`total_all_in_estimate_inr` in the same object, so the total cannot drift from the rows above
+it. Never add nightly rates across legs yourself - a two-night stay would count the same as a
+fortnight.
 
 ## Reading empty results
 
