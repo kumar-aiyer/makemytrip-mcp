@@ -1633,3 +1633,35 @@ politeness budget the project is built on — one device id, personal volume, no
 per-installation property, and a hundred installs is a hundred device ids against the same
 endpoints. That is a decision for the project owner and it has deliberately not been made
 here: no wording in the Legal section was changed.
+
+---
+
+## Run 2026-09-07 — pre-publication scan: the device id was in the repo
+
+Before making a private repo public, the tracked tree was scanned for anything that should
+not be published. No credentials, no tokens, no email addresses — the `password`/`token`
+matches are all prose describing why the server *avoids* authenticated paths.
+
+One real find: **the stable device id appeared in 24 tracked files** — every
+`state-before/baseline/after.json` snapshot and the run logs quoting them.
+
+It is not a credential; there is nothing to log in to. The risk is different and more
+specific: that id is the single identity this installation presents to MakeMyTrip, and the
+politeness model the project rests on is *one device, one person*. Published, anyone could
+paste it into their own `data.json`, and MakeMyTrip would see one "device" generating many
+people's traffic — which would get that id blocked and would break exactly the norm the code
+is written to keep.
+
+Handled the way a leaked identifier should be, rather than by hiding it:
+
+1. **Redacted** in all 24 tracked files (`00000000-…`), so the tree does not advertise it.
+2. **Rotated** the live id, so the value that remains in git history is dead.
+
+Rewriting 36 commits of history to purge the old value was considered and rejected: rotation
+makes the published string worthless, which is the actual goal, and history rewriting on a
+repo about to be shared costs more than it buys.
+
+Worth generalising for anyone shipping something like this: **a stable identifier minted at
+install time is exactly the kind of value that ends up in test fixtures**, because harness
+snapshots record state and state is where it lives. Grep for it before a repo changes
+visibility.

@@ -34,7 +34,7 @@ Raw payloads: `preflight-results.json` (plan: `preflight-plan.json`).
 | `state-baseline.json` | state after the surgical edit — this is the run baseline |
 
 `kulem` removed from `cab_places`; nothing else touched. Places now `bengaluru, goa, panaji`;
-`device_id` unchanged (`bf615af0-…`), verified still unchanged after the pre-flight's Chrome
+`device_id` unchanged (`00000000-…`), verified still unchanged after the pre-flight's Chrome
 warmup. The Dudhsagar gap-recovery trigger (GR1/GR2) is therefore armed again.
 
 **Diff Step 5 against `state-baseline.json`, not `state-before.json`** — the runbook's snippet

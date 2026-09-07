@@ -31,7 +31,7 @@ Raw payloads: `preflight-results.json`.
 | `state-baseline.json` | after the edit: `bengaluru, goa, panaji` — **the run baseline** |
 
 Removed the five places the previous subject harvested (`dudhsagar`, `goaairport`,
-`northgoa`, `ponda`, `southgoa`). `device_id` unchanged (`bf615af0-…`). The cab-place
+`northgoa`, `ponda`, `southgoa`). `device_id` unchanged (`00000000-…`). The cab-place
 gap-recovery trigger is armed again — it has fired in all three runs so far and is the only
 trigger that reliably does.
 
