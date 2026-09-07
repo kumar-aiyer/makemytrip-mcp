@@ -837,6 +837,10 @@ async def mmt_capabilities() -> dict:
             "Local 8hr/80km cab day packages use a different funnel and are not built. "
             "Price a substitute (a short outstation one-way) or say you subtracted it - "
             "do not leave local transport off an itinerary silently.",
+            "A short cab route is often answered with MakeMyTrip's standard local-hire "
+            "package rather than the real distance - 40 km / 4 hr whatever the endpoints. "
+            "Those carry distance_basis: package_bucket and deliberately omit "
+            "all_in_per_km_inr, because a per-km rate off a bucket is a made-up number.",
             "Hotel figures are per night. A stay line is nightly x nights and is an "
             "estimate: a range spanning a price change will not match it exactly.",
             "Rail rows in mmt_intercity_options are filtered: air-conditioned "

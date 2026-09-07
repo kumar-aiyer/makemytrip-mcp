@@ -1514,3 +1514,62 @@ and put what it does know where the caller will read it. Nothing else moved a ga
   match warns. Both cost a retry, neither costs a wrong number.
 - The **call-log rotation** noted when the log was built: unbounded at ~4.8 KB/call.
   Needed before anyone else runs this.
+
+---
+
+## Run 2026-09-06 — the three open items closed
+
+Offline **340/340** (32 new assertions), 19/19, 33/33. Both data-facing fixes verified live.
+
+### BUG-21 — a package bucket is not a route distance
+
+MakeMyTrip answers a short outstation search with its standard local-hire package instead
+of the real route: run 7 got **40 km / 4 hr for every intra-Goa leg**, whether the endpoints
+were 15 km apart or 70. The packages are sold as 4hr/40km, 8hr/80km and so on — exactly
+10 km per hour, a multiple of 40 — which is what makes them recognisable. A real route
+almost never lands there: 603 km in 11.5 h is 52 km/h, 438 km in 10 h is 44.
+
+`cabs.is_package_bucket()` detects it. The distance is still reported, because it is what
+MakeMyTrip said, and a new `distance_basis` says which kind it is. What does **not** survive
+is `all_in_per_km_inr` — a per-km rate computed against a bucket is a made-up number, and it
+is the kind that looks fine. A `distance_note` says so in words.
+
+Live: `goa → panaji` now returns `km 40` with **no per-km figure**.
+
+This is the mildest form of the project's recurring bug — not a wrong number, but a right
+number that invites a wrong derivation. Deleting the derivation was cheaper than explaining
+it.
+
+### BUG-17 residual — match any contiguous window, not just leading phrases
+
+Trying shorter *leading* phrases fixed "Palolem Goa". It never fixed the mirror image:
+"Goa Dabolim Airport" puts the region first, so no leading phrase is ever the place name and
+the query fell to `fallback` — in runs 4 and 6, each time costing a wasted 20-second lookup
+before the subject rephrased. `_query_variants` now yields every contiguous run of words,
+longest first, skipping single words that are only region names so "goa" never stands in for
+the place someone asked about.
+
+Live: `"Goa Dabolim Airport"` → **Dabolim Airport, high, `exact_shortened`, no warning**, on
+the first attempt. In run 4 the same query registered a car-rental office.
+
+Also added `basilica`, `cathedral`, `chapel`, `museum`, `palace`, `jetty` and `terminus` to
+the venue words, so run 7's one false warning — a basilica query answered by the basilica —
+no longer fires.
+
+### Call-log rotation
+
+The log I added in this session grew without limit at ~4.8 KB per call. It now rolls over at
+`MMT_CALL_LOG_MAX_BYTES` (16 MB, about 3,300 calls) keeping one previous generation, so the
+whole thing is capped near 32 MB. Rotation rather than trimming: rewriting a large file to
+drop old lines costs more than it saves, and an audit wants whole entries rather than a file
+truncated mid-JSON. `read()` deliberately ignores the rotated generation — a run truncates
+the log at pre-flight, so the current file *is* the run.
+
+An append-only diagnostics log with no ceiling is a bug in anything anyone else installs, and
+this was mine.
+
+### Where the project stands
+
+Phases 1-3 closed. **No open bugs.** The remaining work is the deploy story — hardening for
+other people's machines, packaging as a Claude Desktop extension, and the redistribution
+question the README's Legal section already raises.

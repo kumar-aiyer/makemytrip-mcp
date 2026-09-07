@@ -58,7 +58,8 @@ STRONG_TIERS = ("exact", "exact_shortened", "segment", "segment_shortened")
 # Words that make a query a request for a specific venue rather than a locality. Asking
 # for "Dabolim Airport" and getting a POI is the correct answer, not a weak match.
 POI_WORDS = ("airport", "hotel", "hostel", "resort", "station", "park", "beach",
-             "falls", "trek", "plantation", "temple", "church", "fort", "market")
+             "falls", "trek", "plantation", "temple", "church", "basilica", "cathedral",
+             "chapel", "fort", "market", "museum", "palace", "jetty", "terminus")
 
 
 def place_candidates(name: str) -> list[str]:
@@ -174,6 +175,32 @@ def validate_trip(iso_date: str, trip_type: str, return_date: str) -> None:
             f"one-way fares under a tripType=RT url.",
             hint="For an out-and-back on one day, quote it as OW - that is what the "
                  "same-day RT fares actually are.")
+
+
+# BUG-21. MakeMyTrip answers a short outstation search with its standard local-hire
+# package rather than the real route: acceptance run 7 got "40 Kms / 4 hr" for every
+# intra-Goa leg, whether the endpoints were 15 km apart or 70. The packages are sold as
+# 4hr/40km, 8hr/80km and so on - exactly 10 km per hour and a multiple of 40 - which is
+# what makes them recognisable. A real route almost never lands on that ratio: 603 km in
+# 11.5 h is 52 km/h, 438 km in 10 h is 44.
+#
+# The distance itself is reported either way, because it is what MakeMyTrip said. What
+# must not survive is `all_in_per_km_inr` derived from it - a per-km rate computed
+# against a package bucket is a made-up number, and it is the kind that looks fine.
+PACKAGE_KMPH = 10.0
+PACKAGE_STEP_KM = 40
+
+
+def is_package_bucket(distance_km, hours) -> bool:
+    """Whether a distance/duration pair is a local-hire package rather than a route."""
+    try:
+        km, hrs = float(distance_km), float(hours)
+    except (TypeError, ValueError):
+        return False
+    if km <= 0 or hrs <= 0:
+        return False
+    return (abs(km / hrs - PACKAGE_KMPH) < 0.01
+            and abs(km % PACKAGE_STEP_KM) < 0.01)
 
 
 def parse_summary(summary: str) -> tuple[int | None, float | None]:
@@ -336,9 +363,11 @@ def parse(html: str, *, url: str = "", iso_date: str = "",
 
     sm = SUMMARY_RE.search(blob)
     distance, hours = parse_summary(sm.group(1) if sm else "")
+    bucket = is_package_bucket(distance, hours)
 
     for c in cabs:
-        if distance and isinstance(c.get("all_in_inr"), (int, float)):
+        # No per-km figure off a package bucket - see is_package_bucket.
+        if distance and not bucket and isinstance(c.get("all_in_inr"), (int, float)):
             c["all_in_per_km_inr"] = round(c["all_in_inr"] / distance, 2)
     cabs.sort(key=lambda c: (c["all_in_inr"] is None, c["all_in_inr"] or 0))
 
@@ -346,6 +375,13 @@ def parse(html: str, *, url: str = "", iso_date: str = "",
         "route": route, "date": iso_date, "url": url,
         "distance_km": distance,
         "approx_hours": hours,
+        "distance_basis": "package_bucket" if bucket else "route",
+        **({"distance_note":
+            f"MakeMyTrip answered with its standard {distance} km / {hours} hr local "
+            f"hire package, not the distance between these two points. Treat "
+            f"distance_km and approx_hours as the package, and note that no "
+            f"all_in_per_km_inr is given - it would be derived from a bucket."}
+           if bucket else {}),
         "cab_count": len(cabs), "cabs": cabs,
         "cheapest": cabs[0] if cabs else None,
     }

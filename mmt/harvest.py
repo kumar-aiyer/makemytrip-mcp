@@ -118,16 +118,40 @@ async def _click_best_suggestion(page, query: str) -> None:
             await items.nth(best_idx).click(timeout=4000)
 
 
-def _query_variants(query: str) -> list[str]:
-    """The query, then progressively shorter leading phrases.
+# Words that only say where something is. A one-word variant made of nothing but these
+# would match a region rather than the place asked for, so it is not tried alone.
+REGION_WORDS = frozenset({"goa", "india", "karnataka", "kerala", "maharashtra",
+                          "tamil", "nadu", "north", "south", "east", "west"})
 
-    BUG-17: a caller naturally writes "Palolem Goa", appending the region. That defeats
-    the exact/segment tiers - the locality row is just "Palolem" - and the phrase then
+
+def _query_variants(query: str) -> list[str]:
+    """Every contiguous run of words in the query, longest first.
+
+    BUG-17: a caller writes "Palolem Goa", appending the region - which defeats the
+    exact/segment tiers, because the locality row is just "Palolem", and the phrase then
     matches by substring against "Bibhitaki Hostel Palolem Goa", so a hostel wins.
-    Trying "Palolem" as well lets the locality win on a strong tier first.
+    Trying shorter *leading* phrases fixed that. It did not fix the mirror image:
+    "Goa Dabolim Airport" puts the region first, so no leading phrase is ever the place
+    name and the query falls through to `fallback` - twice in seven acceptance runs, each
+    time costing a wasted 20-second lookup before the caller rephrased.
+
+    Contiguous windows cover both: "goa dabolim airport" yields "dabolim airport", which
+    matches on a strong tier. Single words made only of region words are skipped, so
+    "goa" alone never stands in for the place someone asked about.
     """
     words = query.strip().lower().split()
-    return [" ".join(words[:i]) for i in range(len(words), 0, -1)] or [""]
+    if not words:
+        return [""]
+    out: list[str] = []
+    for size in range(len(words), 0, -1):
+        for start in range(0, len(words) - size + 1):
+            window = words[start:start + size]
+            if size == 1 and window[0] in REGION_WORDS:
+                continue
+            phrase = " ".join(window)
+            if phrase not in out:
+                out.append(phrase)
+    return out or [" ".join(words)]
 
 
 def _place_from_captured(bodies: list[dict], query: str) -> tuple[dict[str, Any] | None, str]:

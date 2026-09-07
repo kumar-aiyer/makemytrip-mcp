@@ -1332,6 +1332,114 @@ def test_intercity_skips_trains_for_places() -> None:
           seen.get("pickup_time") == "14:00", str(seen))
 
 
+def test_package_bucket() -> None:
+    """BUG-21: MakeMyTrip answers a short outstation search with its standard local-hire
+    package. Run 7 got "40 Kms / 4 hr" for every intra-Goa leg, 15 km or 70 km alike,
+    and a per-km rate derived from that is a made-up number."""
+    for km, hrs in ((40, 4), (80, 8), (120, 12), (160, 16)):
+        check(f"bucket: {km}/{hrs} is a package", CB.is_package_bucket(km, hrs))
+    for km, hrs in ((603, 11.5), (438, 10), (40, 4.5), (45, 4.5), (554, 8.4)):
+        check(f"bucket: {km}/{hrs} is a real route",
+              not CB.is_package_bucket(km, hrs))
+    check("bucket: missing figures are not a package",
+          not CB.is_package_bucket(None, None) and not CB.is_package_bucket(40, 0))
+
+
+def test_parse_suppresses_bucket_per_km() -> None:
+    """The distance is still reported - it is what MakeMyTrip said - but the derived
+    per-km rate is not, because it would be derived from a bucket."""
+    html = (FIX / "cabs_listing.html").read_text(encoding="utf-8")
+    real = CB.parse(html, iso_date="2026-12-22", route="Kochi -> Rameswaram")
+    check("bucket: a real route keeps its per-km figure",
+          real["distance_basis"] == "route"
+          and real["cabs"][0].get("all_in_per_km_inr") is not None,
+          str(real["distance_basis"]))
+    check("bucket: and carries no distance_note", "distance_note" not in real)
+
+    # the live shape from run 7: 40 km / 4 hr on every intra-Goa leg
+    faked = html.replace("438 Kms", "40 Kms").replace("10 hr(s)", "4 hr(s)")
+    bucket = CB.parse(faked, iso_date="2026-12-22", route="Vagator -> Old Goa")
+    check("bucket: detected from the summary", bucket["distance_basis"] == "package_bucket",
+          str(bucket["distance_basis"]))
+    check("bucket: distance is still reported", bucket["distance_km"] == 40)
+    check("bucket: but no per-km rate is derived from it",
+          all("all_in_per_km_inr" not in c for c in bucket["cabs"]))
+    check("bucket: and the caller is told why",
+          "local hire package" in bucket.get("distance_note", ""))
+
+
+def test_query_variants_both_directions() -> None:
+    """BUG-17 residual: leading phrases fixed "Palolem Goa" but not its mirror image.
+    "Goa Dabolim Airport" puts the region first, so no leading phrase is ever the place
+    name - it fell to `fallback` twice in seven runs, costing a wasted lookup each time."""
+    from mmt import harvest as HV
+
+    v = HV._query_variants("Goa Dabolim Airport")
+    check("variants: the region-first query yields the place name",
+          "dabolim airport" in v, str(v))
+    check("variants: longest first", v[0] == "goa dabolim airport")
+    check("variants: a bare region word is never tried alone",
+          "goa" not in v, str(v))
+    check("variants: the old leading-phrase case still works",
+          HV._query_variants("Palolem Goa") == ["palolem goa", "palolem"])
+    check("variants: a single region word survives when it IS the query",
+          HV._query_variants("goa") == ["goa"])
+    check("variants: no duplicates", len(v) == len(set(v)))
+
+    # and it resolves through the real ranker
+    def body(*places):
+        return [{"data": list(places)}]
+
+    airport = {"place_id": "A", "main_text": "Dabolim Airport",
+               "secondary_text": "Goa, India", "is_city": False}
+    rentals = {"place_id": "R", "main_text": "Comfy Car Rentals Goa",
+               "secondary_text": "Goa, India", "is_city": False}
+    place, tier = HV._place_from_captured(body(rentals, airport), "Goa Dabolim Airport")
+    check("variants: the airport wins over the car-rental office",
+          place["place_id"] == "A", f"{place['place_id']} via {tier}")
+    check("variants: on a strong tier", tier.startswith(("exact", "segment")), tier)
+    m = CB.match_quality(place, "Goa Dabolim Airport", tier)
+    check("variants: and no warning on a right answer", "warning" not in m, str(m))
+
+    # a basilica query answered by the basilica must not warn either
+    bas = {"place_id": "B", "main_text": "Basilica of Bom Jesus", "is_city": False}
+    m2 = CB.match_quality(bas, "Old Goa Basilica of Bom Jesus", "exact_shortened")
+    check("variants: basilica counts as a venue word", "warning" not in m2, str(m2))
+
+
+def test_call_log_rotates() -> None:
+    """An append-only diagnostics log that grows without limit is a bug in anything
+    anyone else installs."""
+    import tempfile
+    from unittest.mock import patch
+
+    with tempfile.TemporaryDirectory() as tmp:
+        diag = pathlib.Path(tmp) / "diagnostics"
+        with patch.object(CALLLOG.C, "DIAG_DIR", diag), \
+             patch.object(CALLLOG, "MAX_BYTES", 2_000):
+            for i in range(40):
+                CALLLOG.record("mmt_demo", {"i": i}, {"pad": "x" * 200}, 1)
+            current = CALLLOG.path()
+            previous = current.with_suffix(current.suffix + ".1")
+            check("rotate: the live log stays under the cap",
+                  current.stat().st_size < 2_000 + 400, str(current.stat().st_size))
+            check("rotate: a previous generation is kept", previous.exists())
+            check("rotate: entries are still readable", len(CALLLOG.read()) > 0)
+            check("rotate: and are whole JSON objects",
+                  all("tool" in e for e in CALLLOG.read()))
+            check("rotate: exactly one generation is kept",
+                  not previous.with_suffix(previous.suffix + ".1").exists())
+
+        # disabled cap means no rotation
+        diag2 = pathlib.Path(tmp) / "diag2"
+        with patch.object(CALLLOG.C, "DIAG_DIR", diag2), \
+             patch.object(CALLLOG, "MAX_BYTES", 0):
+            for i in range(20):
+                CALLLOG.record("mmt_demo", {"i": i}, {"pad": "y" * 200}, 1)
+            check("rotate: MMT_CALL_LOG_MAX_BYTES=0 disables rotation",
+                  len(CALLLOG.read()) == 20, str(len(CALLLOG.read())))
+
+
 def main() -> int:
     for fn in (test_initial_state, test_rate_plans, test_hotel_api_shape,
                test_hotel_urls, test_rsc, test_trains, test_train_window,
@@ -1350,6 +1458,8 @@ def main() -> int:
                test_match_quality_no_false_warning,
                test_stream_verdict, test_harvest_blocks_instead_of_grinding,
                test_single_mode_tools_are_hidden, test_probable_station,
+               test_package_bucket, test_parse_suppresses_bucket_per_km,
+               test_query_variants_both_directions, test_call_log_rotates,
                test_intercity_skips_trains_for_places,
                test_intercity_indicative_train,
                test_intercity_options):
