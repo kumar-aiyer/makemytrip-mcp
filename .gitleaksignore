@@ -1,0 +1,10 @@
+# Known false positives, reviewed by hand.
+#
+# The generic-api-key rule fires on entropy, and a MakeMyTrip flight-search URL
+# fragment - "it=BLR-GOI-20261215", a route and a date - looks random enough to trip
+# it. There is no credential anywhere in this project: the server deliberately has no
+# login, token or account path at all (docs/AGENT-PROMPT.md rule 2).
+#
+# The current occurrence is marked inline with `# gitleaks:allow`; this entry covers
+# the same line in the commit that predates that marker.
+7556c58b308521dd7ccaaa8b5cd5eede43f307d2:tests/test_parsers.py:generic-api-key:190

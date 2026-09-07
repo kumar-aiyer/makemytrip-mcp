@@ -208,6 +208,7 @@ def test_flight_airports() -> None:
 
 def test_flight_urls() -> None:
     u = FL.search_url("BLR", "GOI", "2026-12-15")
+    # gitleaks:allow - a route+date fragment, not a key; it trips the entropy rule
     check("flight: api url uses YYYYMMDD", "it=BLR-GOI-20261215" in u, u)
     p = FL.page_url("BLR", "GOI", "2026-12-15", adults=2)
     check("flight: page url uses DD/MM/YYYY",
