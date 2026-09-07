@@ -1573,3 +1573,63 @@ this was mine.
 Phases 1-3 closed. **No open bugs.** The remaining work is the deploy story — hardening for
 other people's machines, packaging as a Claude Desktop extension, and the redistribution
 question the README's Legal section already raises.
+
+---
+
+## Run 2026-09-06 — deploy: a doctor, a Claude Desktop extension, and an install path
+
+340/340 offline, 19/19, 33/33 unchanged. Two new tools, both exercised end to end.
+
+### `tools/doctor.py` — the first thing an installer runs
+
+Answers "will this start on this machine" in seconds: Python version, playwright, a usable
+Chrome, a writable data folder, the server importing, and whether MakeMyTrip answers from
+this connection at all. Every failure prints the command that fixes it; the exit code is the
+number of things still wrong, so a script can gate on it.
+
+Two details worth keeping:
+
+- **It asks the server's own `playwright_available()`** rather than importing playwright its
+  own way. The first draft did the latter and reported "playwright is not installed" on a
+  machine where it plainly was — playwright exposes no `__version__` attribute. A doctor that
+  disagrees with the thing it is diagnosing is worse than no doctor, so it now delegates and
+  reads the version from package metadata.
+- **It states the privacy footprint in place**: a device id and saved cab places, a Chrome
+  profile holding makemytrip.com cookies, and a log of every call with its results — all
+  local, delete the folder to reset. That belongs where someone is deciding whether to
+  install, not three pages into a README.
+
+### `tools/build_mcpb.py` — a Claude Desktop extension
+
+An `.mcpb` is a zip of the server plus a `manifest.json`, installed in one click instead of
+hand-editing `claude_desktop_config.json` with absolute paths. The manifest was written
+against the published spec and then **validated with the official `@anthropic-ai/mcpb`
+CLI** — *"Manifest schema validation passes!"* — and the build shells out to that packer when
+`npx` is available rather than trusting this repo's reading of the format.
+
+**Playwright is deliberately not bundled.** It is 107 MB, and 102 MB of that is a driver
+carrying a platform-specific node binary — vendoring it would produce a Windows-only file a
+hundred times the size of the code it contains. The extension runs the system `python`, so a
+pip-installed playwright resolves normally. `--vendor` exists for anyone who wants a
+self-contained, platform-locked build. The bundle is **80 KB**.
+
+Verified by extracting the built `.mcpb` and speaking MCP to it from the packaged layout:
+handshake, `tools/list` returning **12 tools with the hide intact**, and a `mmt_version`
+call answering. The packaging works, not just the manifest.
+
+### What no installer can do
+
+Three requirements survive any packaging, and `doctor.py` checks all three: Python 3.10+,
+Chrome or Edge installed, and a **residential** connection — MakeMyTrip's CDN refuses
+datacenter IPs, so a VPN or cloud host cannot work. Linux is effectively out, because the
+site blocks headless browsers and this needs a headed one.
+
+### The step that is not technical
+
+`README.md` still says *"Don't redistribute it"*, and `docs/AGENT-PROMPT.md` says *"Do not
+publish this to any registry or package index."* Everything above makes installation easy for
+**whoever is given the repo**; it does not resolve whether it should be handed to anyone. The
+politeness budget the project is built on — one device id, personal volume, no polling — is a
+per-installation property, and a hundred installs is a hundred device ids against the same
+endpoints. That is a decision for the project owner and it has deliberately not been made
+here: no wording in the Legal section was changed.

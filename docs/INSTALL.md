@@ -14,11 +14,19 @@ The server is plain **MCP over stdio**, so every host below runs the same `serve
 git clone <your-repo> makemytrip-mcp
 cd makemytrip-mcp
 python -m pip install playwright
-python tools/probe.py
+python tools/doctor.py
 ```
 
-`probe.py` prints a PASS/FAIL gate table. If it says *Core hotel pricing: USABLE*, register
-the server below. If not, [docs/RUNBOOK.md](RUNBOOK.md) has the fixes.
+**`doctor.py` is the check to run first.** It answers "will this start on this machine"
+in a few seconds - Python version, playwright, a usable Chrome, a writable data folder,
+the server importing, and whether MakeMyTrip answers at all from this connection. Every
+failure prints the exact command that fixes it, and the exit code is the number of
+things still wrong.
+
+`tools/probe.py` is the heavier gate: it drives real searches and prints a PASS/FAIL
+table. Run it when you want to confirm live pricing works, not just that the server
+starts. If it says *Core hotel pricing: USABLE* you are done. If not,
+[docs/RUNBOOK.md](RUNBOOK.md) has the fixes.
 
 ---
 
@@ -133,6 +141,32 @@ claude mcp add makemytrip --scope user -- C:/Python312/python.exe C:/path/to/mak
 ---
 
 ## 4. Claude desktop app
+
+### 4a. As an extension (.mcpb) - the one-click path
+
+```bash
+python tools/build_mcpb.py
+# -> dist/makemytrip-mcp-<version>.mcpb
+```
+
+Then **Claude Desktop → Settings → Extensions → install from file**, and pick that file.
+The extension declares a *Data folder* setting, so the device id, saved cab places,
+browser profile and call log land wherever you choose (default `~/.makemytrip-mcp`).
+
+The build uses the official `@anthropic-ai/mcpb` packer when `npx` is available, which
+validates the manifest against the real schema on the way past, and falls back to a plain
+zip otherwise - an `.mcpb` is only a zip with a `manifest.json`.
+
+**Playwright is not bundled.** It is 107 MB, and 102 MB of that is a driver containing a
+platform-specific node binary, so bundling it would make a Windows-only file a hundred
+times the size of the code it carries. The extension runs the system `python`, so
+`python -m pip install playwright` on the target machine is enough. `--vendor` bundles it
+anyway for anyone who wants a self-contained, platform-locked build.
+
+That leaves the three things no installer can do for you, all of which `doctor.py`
+checks: Python 3.10+, Chrome or Edge installed, and a **residential** connection.
+
+### 4b. By hand
 
 `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or
 `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
