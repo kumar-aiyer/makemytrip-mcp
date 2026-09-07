@@ -1444,3 +1444,73 @@ of its budget, and whose rows also lacked the split. The base/tax instruction is
 `mmt_hotel_search` and `mmt_hotel_rates` as well, where a subject working through the hotel
 tools will actually meet it. Whether that is enough is a question for run 7, and it is the
 same lesson a third time: **guidance has to live where the caller is looking.**
+
+---
+
+## Run 2026-09-06 — acceptance run 7: **clean sweep. Phase 3 closes.**
+
+Full audit in `harness/runs/2026-09-06-acceptance-7/run-log.md`. 36 calls, empty workspace,
+Sonnet-5, 9-page deliverable, **2 flight searches** — inside the budget for the first time
+alongside a full pass.
+
+**Every mandatory gate passes on one run**, from a subject that saw only the narrowed
+interface, with the evidence produced by the server itself rather than a host export.
+
+### The hide made the run cheaper, not more expensive
+
+The objection to routing everything through one tool was cost. Measured: **calls fell from
+53 to 36**, because six local transfers each cost a single cab quote at 10-12 s, the mode
+guards skipping flight and train with a stated reason. Only the two genuine intercity legs
+ran all three modes.
+
+### H1 finally generalised, and the sequence is the lesson
+
+| run | where the base/tax instruction lived | result |
+|---|---|---|
+| 3, 4 | nowhere — a correct schema, silently | collapsed to all-in |
+| 5 | `mmt_intercity_options` note | split — the subject used that tool |
+| 6 | same | collapsed — the subject bypassed that tool |
+| 7 | intercity note **and** `mmt_hotel_search` / `mmt_hotel_rates` | split on the cover, in the mode table and in the hotel table |
+
+**Guidance has to live where the caller is looking, in every tool it applies to.** Four runs
+to learn it; it is the most portable thing in this file.
+
+### H2 passed the way it was designed to
+
+A per-leg table of flight, train and cab with `Base`, `Tax`, `Total (2 pax)` and a
+**Dominated?** column — the comparator's output rendered nearly verbatim — plus the caveat,
+unprompted:
+
+> *Train fares are indicative — this route falls outside IRCTC's 60-day booking window until
+> 17 Oct 2026, so MakeMyTrip quoted the nearest priced date (4 Nov 2026, same weekday
+> pattern) as a stand-in for comparison, not the 16 Dec fare itself.*
+
+4 Nov is a Wednesday, matching 16 Dec: `furthest_bookable`'s weekday matching exercised on a
+second day of the week and reported correctly.
+
+### BUG-18 earned its keep in front of a subject
+
+The subject resolved "December 16th" to **2025** and was refused twice in **0 ms**. Run 3
+made the identical mistake and paid ~200 seconds and two flight searches for it.
+
+### What the seven runs actually taught
+
+Every substantive bug in this project has been the same bug wearing different clothes: **an
+unvalidated value presented as a good one.** The Akamai stub counted as success (BUG-12); a
+nightly rate was labelled a stay total (BUG-16); a flight from another state was offered as a
+Goa departure (BUG-19); a car-rental office was registered as an airport (BUG-17); a blocked
+page was reported as an empty route (BUG-20). Each was found by a run that *used* the value
+rather than by a test that checked its shape.
+
+And the fixes divide cleanly in two: make the server refuse to state what it does not know,
+and put what it does know where the caller will read it. Nothing else moved a gate.
+
+### Left open, none of them blocking
+
+- **BUG-21** — every cab route reports `distance_km: 40`, so the derived per-km figure is
+  unreliable on short routes. MakeMyTrip's own bucketing; needs labelling, not fixing.
+- **BUG-17 residual** — a region-first query ("Goa Dabolim Airport") still falls to
+  `fallback`; and `basilica` is missing from the venue-word list, so a correct basilica
+  match warns. Both cost a retry, neither costs a wrong number.
+- The **call-log rotation** noted when the log was built: unbounded at ~4.8 KB/call.
+  Needed before anyone else runs this.

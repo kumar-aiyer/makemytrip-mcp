@@ -1,0 +1,93 @@
+{
+  "device_id": "bf615af0-07b1-44d3-940b-751ac06499d0",
+  "cab_places": {
+    "goa": {
+      "address": "Goa beach, Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_city": false,
+      "secondary_text": "Maddo Waddo, MADDO VADDO, Calangute, Goa, India",
+      "is_airport": false,
+      "main_text": "Goa beach",
+      "place_id": "ChIJ6dgmPADBvzsRw231CmbGUKk"
+    },
+    "panaji": {
+      "address": "Panaji, Goa, India",
+      "is_city": true,
+      "secondary_text": "Goa, India",
+      "is_airport": false,
+      "main_text": "Panaji",
+      "place_id": "ChIJ2cxhM6nAvzsRYb7lJAsSmN0"
+    },
+    "bengaluru": {
+      "address": "Bengaluru, Karnataka, India",
+      "is_city": true,
+      "secondary_text": "Karnataka, India",
+      "is_airport": false,
+      "main_text": "Bengaluru",
+      "place_id": "ChIJbU60yXAWrjsR4E9-UejD3_g"
+    },
+    "goa airport": {
+      "address": "Dabolim Airport, Madgaon, Goa, India",
+      "is_city": false,
+      "secondary_text": "Madgaon, Goa, India",
+      "is_airport": false,
+      "main_text": "Dabolim Airport",
+      "place_id": "ChIJbdsIfAC5vzsRN8CnIj9lBMM"
+    },
+    "calangute": {
+      "address": "Calangute Beach, Goa",
+      "is_city": false,
+      "secondary_text": "Goa",
+      "is_airport": false,
+      "main_text": "Calangute Beach",
+      "place_id": "ChIJK-30SAHqvzsRF30lXa0vWcs"
+    },
+    "old goa": {
+      "address": "Basilica of Bom Jesus, Old Goa Road, Old Goa, Goa, India",
+      "is_city": false,
+      "secondary_text": "Old Goa Road, Old Goa, Goa, India",
+      "is_airport": false,
+      "main_text": "Basilica of Bom Jesus",
+      "place_id": "ChIJiQKbufK-vzsRuKcVn2hWgB4"
+    },
+    "colva": {
+      "address": "Colva Beach, Goa",
+      "is_city": false,
+      "secondary_text": "Goa",
+      "is_airport": false,
+      "main_text": "Colva Beach",
+      "place_id": "ChIJo3Ithhi0vzsRNQmtLCAb3rU"
+    },
+    "anjuna": {
+      "address": "Anjuna Beach, Anjuna, Goa",
+      "is_city": false,
+      "secondary_text": "Anjuna, Goa",
+      "is_airport": false,
+      "main_text": "Anjuna Beach",
+      "place_id": "ChIJmQGrEY_pvzsRof_MwgLMd9c"
+    },
+    "panaji city": {
+      "address": "Panaji, Goa, India",
+      "is_city": true,
+      "secondary_text": "Goa, India",
+      "is_airport": false,
+      "main_text": "Panaji",
+      "place_id": "ChIJ2cxhM6nAvzsRYb7lJAsSmN0"
+    },
+    "vagator": {
+      "address": "Vagator Beach, Anjuna, Goa",
+      "is_city": false,
+      "secondary_text": "Anjuna, Goa",
+      "is_airport": false,
+      "main_text": "Vagator Beach",
+      "place_id": "ChIJrwFB_W7pvzsRAxuEMqa-5x8"
+    },
+    "benaulim": {
+      "address": "Benaulim Beach, Goa",
+      "is_city": false,
+      "secondary_text": "Goa",
+      "is_airport": false,
+      "main_text": "Benaulim Beach",
+      "place_id": "ChIJvcMyo2W0vzsRGcvnaDPdOzU"
+    }
+  }
+}
