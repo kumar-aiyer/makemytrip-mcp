@@ -155,8 +155,8 @@ async def _t2_post(url: str, body: dict, headers: dict[str, str],
     ctx.request.post returns the six-byte "200-OK" stub (re-measured 2026-09-05).
 
     Two details are load-bearing and were both found the hard way: the page must be
-    a hotel *listing* page (see C.HOTEL_API_CONTEXT), and its cookies must be left
-    alone.
+    one the site permits the fetch from (see C.HOTEL_API_CONTEXT), and its cookies
+    must be left alone.
     """
     async with SESSION.page() as page:
         # Cookies are deliberately NOT cleared. The original T2-POST recipe cleared
@@ -168,6 +168,20 @@ async def _t2_post(url: str, body: dict, headers: dict[str, str],
         with contextlib.suppress(Exception):
             await page.wait_for_load_state("load", timeout=15_000)
         await page.wait_for_timeout(1500)
+        # The fetch is only permitted from a real hotels-in-<city>.html page. When
+        # Akamai answers that route with its 169-byte "200-OK" stub, the in-page fetch
+        # dies as an opaque "TypeError: Failed to fetch" that reads like a network
+        # fault. Detect the stub up front and say what actually happened.
+        ctx_html = await page.content()
+        if len(ctx_html) < 1000:
+            raise Blocked(
+                "The hotel listing context page came back as an Akamai stub "
+                f"({len(ctx_html)} bytes), so the in-page POST cannot run.",
+                hint="MakeMyTrip is serving its bot stub for hotels-in-<city>.html. "
+                     "Back off and retry; if it persists, re-capture per "
+                     "docs/API-REFERENCE.md section 7.",
+                details={"context_url": C.HOTEL_API_CONTEXT,
+                         "context_bytes": len(ctx_html)})
         safe = {k: v for k, v in headers.items()
                 if k.lower() not in ('user-agent', 'accept-encoding', 'connection',
                                      'cookie', 'cookie2', 'origin', 'referer',
