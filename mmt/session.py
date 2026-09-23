@@ -451,6 +451,13 @@ class Session:
     async def _teardown(self) -> None:
         """Drop every browser handle. Caller must hold self._lock."""
         self._warm = False
+        # Do NOT keep the CDP-avoidance latch across a teardown. It is set once when a
+        # self-launched Chrome warms up without `_abck`, but that can be a transient
+        # Akamai miss - and the Playwright fallback is strictly worse (Akamai serves its
+        # bot stub to a browser Playwright started, on the cabs-listing and flight
+        # routes). Clearing it here means the next cold launch retries the preferred CDP
+        # path instead of the process staying pinned to the fallback until a restart.
+        self._no_cdp = False
         if self._idle_task:
             self._idle_task.cancel()
             self._idle_task = None

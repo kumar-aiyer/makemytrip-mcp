@@ -39,13 +39,14 @@ CAB_LISTING = f"{WWW}/cabs/listing"
 CAB_HOME = f"{WWW}/cabs/"
 HOME = f"{WWW}/?cc=IN&lang=eng"
 
-# The page the hotel-API POST is issued from. It must be a hotel *listing* page:
-# measured 2026-09-05, the /hotels/ funnel refuses the fetch to mapi outright
-# ("TypeError: Failed to fetch" - its CSP does not allow the connection) and the
-# homepage re-navigates itself under the call. Which city the page is for does not
-# matter - the search is driven entirely by the POST body, and a Kochi query issued
-# from this page returns Kochi results. It is a permitted origin, nothing more.
-HOTEL_API_CONTEXT = f"{WWW}/hotels/hotels-in-goa.html"
+# The page the hotel-API POST is issued from. Re-measured 2026-09-23: the /hotels/
+# funnel now hosts the fetch - it loads a ~1.25 MB real page and the in-page POST
+# returns 200 with the full JSON payload. The old hotels-in-<city>.html listing URLs
+# now 302-redirect to /hotels/, and going straight there is what makes the call work.
+# The homepage is still unusable (it re-navigates under the call: "Execution context
+# was destroyed"). Which page it is does not drive the search - the POST body does,
+# and a Kochi query issued from here returns Kochi results.
+HOTEL_API_CONTEXT = f"{WWW}/hotels/"
 
 # Flights API header contract - captured from the site's own XHR (2026-09-05).
 # search-stream-dt rejects the call with a 403 JSON naming each missing header

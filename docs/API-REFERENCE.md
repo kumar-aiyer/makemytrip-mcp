@@ -54,12 +54,12 @@ Body — the meaningful fields (complete literal in `mmt/hotels.py::build_body`)
 >
 > | Page the fetch runs from | Result |
 > |---|---|
-> | `hotels-in-<city>.html` (any city) | **works** - 246 KB of real JSON |
-> | `/hotels/` funnel | `TypeError: Failed to fetch` - CSP forbids the connection |
+> | `/hotels/` funnel | **works** - re-measured 2026-09-23: a 1.25 MB real page, POST returns 200 + the full JSON payload |
+> | `hotels-in-<city>.html` | 302-redirects to `/hotels/`, so it now lands on the working page |
 > | homepage | the page re-navigates under the call, killing the execution context |
 >
-> Which city's listing page is irrelevant: the search is driven entirely by the body, and a
-> Kochi query issued from the Goa listing page returns Kochi results.
+> The page is only a permitted origin: the search is driven entirely by the body, and a
+> Kochi query issued from the Goa page returns Kochi results.
 >
 > **Do not clear cookies first.** An earlier recipe here did, to get "fresh clearance". That
 > now breaks the call outright (`TypeError: Failed to fetch`); left alone, it succeeds.
